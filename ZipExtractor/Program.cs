@@ -43,11 +43,13 @@ while (true)
 
     if (Directory.Exists(inputPath))
     {
-        // 先清理输入路径内的空文件夹（递归）
-        WinRarExtractor.CleanEmptyDirectories(inputPath, false);
+        // 先清理输入路径内的空文件夹
 
         foreach (var file in Directory.EnumerateFiles(inputPath, "*", SearchOption.AllDirectories))
+        {
+            _ = FileSystemHelper.CleanEmptyDirectories(inputPath, false);
             WinRarExtractor.ExtractRecursively(file, inputPath, passwords);
+        }
     }
     else
     {
