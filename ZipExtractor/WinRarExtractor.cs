@@ -7,13 +7,9 @@ using System.Text;
 
 namespace ZipExtractor;
 
-public static class WinRarExtractor
+public abstract class WinRarExtractor : ExtractorBase
 {
     private const string WinRarPath = @"C:\App\WinRAR\WinRAR.exe";
-    private const string BasePath = @"D:\";
-    public static readonly string TempPath = Path.Combine(BasePath, "TempExt");
-    public static readonly string CompletePath = Path.Combine(BasePath, "CompleteExt");
-    public static readonly string ErrorPath = Path.Combine(BasePath, "ErrorExt");
 
     private static readonly HashSet<string> _SingleArchiveOrFirstVolumeExtensions =
     [
@@ -28,6 +24,12 @@ public static class WinRarExtractor
     /// <param name="passwords">可能的密码列表</param>
     public static void ExtractRecursively(string archivePath, string rootPath, string?[] passwords)
     {
+        if (!File.Exists(WinRarPath))
+        {
+            Console.WriteLine($"WinRAR未找到：{WinRarPath}");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(archivePath))
         {
             Console.WriteLine("压缩包路径不能为空");
@@ -47,16 +49,6 @@ public static class WinRarExtractor
             Console.WriteLine($"文件不存在：{archiveFile.FullName}");
             return;
         }
-
-        if (!File.Exists(WinRarPath))
-        {
-            Console.WriteLine($"WinRAR未找到：{WinRarPath}");
-            return;
-        }
-
-        var tempDir = Directory.CreateDirectory(TempPath);
-        _ = Directory.CreateDirectory(CompletePath);
-        _ = Directory.CreateDirectory(ErrorPath);
 
         var finalResults = new List<FileSystemInfo>();
         var archiveQueue = new Queue<FileInfo>();
@@ -90,10 +82,10 @@ public static class WinRarExtractor
                 Console.WriteLine(intermediateArchive);
 
             // 解压到当前文件所在目录
-            var extractPath = currentArchive.Directory ?? tempDir;
+            var extractDir = currentArchive.Directory ?? TempDir;
 
             // 避免冲突
-            var outputFolder = FileSystemHelper.GetUniquePath(Path.Combine(extractPath.FullName, Path.GetFileNameWithoutExtension(currentArchive.Name)));
+            var outputFolder = FileSystemHelper.GetUniquePath(Path.Combine(extractDir.FullName, currentArchive.NameWithoutExtension));
 
             var outputDir = Directory.CreateDirectory(outputFolder);
 
@@ -113,7 +105,7 @@ public static class WinRarExtractor
                 Console.WriteLine("解压失败，所有密码均不正确或文件损坏");
                 var cp = intermediateArchives is [_] ? "" : commonPrefix!;
                 MoveArchivesToError(intermediateArchives, cp);
-                _ = FileSystemHelper.RemoveIfExists(outputDir);
+                _ = outputDir.RemoveIfExists();
                 return;
             }
 
@@ -280,7 +272,7 @@ public static class WinRarExtractor
         foreach (var archiveFile in archiveFiles)
         {
             var dest = Path.Combine(destDir, archiveFile.Name);
-            if (FileSystemHelper.TryMoveEntry(archiveFile, dest))
+            if (archiveFile.TryMoveTo(dest))
                 Console.WriteLine("已移动失败压缩包到：" + dest);
             else
                 Console.WriteLine($"移动失败压缩包到 {nameof(ErrorPath)} 失败：{archiveFile.FullName} -> {dest}");
@@ -295,7 +287,7 @@ public static class WinRarExtractor
         foreach (var resultDir in resultDirs)
         {
             var dest = Path.Combine(destDir, resultDir.Name);
-            if (FileSystemHelper.TryMoveEntry(resultDir, dest))
+            if (resultDir.TryMoveTo(dest))
                 Console.WriteLine("已移动解压结果到：" + dest);
             else
                 Console.WriteLine($"移动解压结果到 {nameof(CompletePath)} 失败：{resultDir.FullName} -> {dest}");
@@ -329,7 +321,7 @@ public static class WinRarExtractor
             Console.WriteLine("正在清理中间文件...");
 
             foreach (var archive in intermediates)
-                if (archive.FullName.StartWithFileName(TempPath) && FileSystemHelper.RemoveIfExists(archive))
+                if (archive.FullName.StartWithFileName(TempPath) && archive.RemoveIfExists())
                     Console.WriteLine($"已删除：{archive.FullName}");
             _ = FileSystemHelper.CleanEmptyDirectories(TempPath, false);
             Console.WriteLine("清理完成！");
@@ -362,7 +354,7 @@ public static class WinRarExtractor
                 };
                 var destFile = Path.ChangeExtension(source.FullName, newExt);
                 var newSourcePath = FileSystemHelper.GetUniquePath(destFile);
-                _ = FileSystemHelper.TryMoveEntry(source, newSourcePath);
+                _ = source.TryMoveTo(newSourcePath);
             }
 
             var list = FindSiblingSplitVolumes(source, out commonPrefix);
@@ -373,7 +365,7 @@ public static class WinRarExtractor
             if (list is [var onlyVolume])
             {
                 var destPathSingle = FileSystemHelper.GetUniquePath(Path.Combine(TempPath, onlyVolume.Name));
-                _ = FileSystemHelper.TryMoveEntry(source, destPathSingle);
+                _ = source.TryMoveTo(destPathSingle);
                 return [source];
             }
 
@@ -383,7 +375,7 @@ public static class WinRarExtractor
             foreach (var volume in list)
             {
                 var destPath = Path.Combine(tempDestDir, volume.Name);
-                _ = FileSystemHelper.TryMoveEntry(volume, destPath);
+                _ = volume.TryMoveTo(destPath);
                 result.Add(volume);
             }
 

@@ -28,34 +28,43 @@ string?[] passwords =
     "nameless",
     "south-plus",
     "tuyile2025.!2333",
-    "图一乐讨厌倒狗"
+    "图一乐讨厌倒狗",
+    "mm666",
+    "XueFc"
 ];
 
-while (true)
-{
-    Console.WriteLine("请输入待解压文件的完整路径（回车退出）：");
-    var inputPath = Console.ReadLine()?.Trim().Trim('"');
-    if (string.IsNullOrWhiteSpace(inputPath) || inputPath.ContainsAny(Path.GetInvalidPathChars()))
-    {
-        Console.WriteLine("已退出。");
-        break;
-    }
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir);
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.ErrorDir);
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.TempDir);
+SevenZipExtractor.ExtractAll(passwords);
 
-    if (Directory.Exists(inputPath))
-    {
-        // 先清理输入路径内的空文件夹
 
-        foreach (var file in Directory.EnumerateFiles(inputPath, "*", SearchOption.AllDirectories))
-        {
-            _ = FileSystemHelper.CleanEmptyDirectories(inputPath, false);
-            WinRarExtractor.ExtractRecursively(file, inputPath, passwords);
-        }
-    }
-    else
-    {
-        var rootForSingle = Path.GetDirectoryName(inputPath);
-        if (string.IsNullOrEmpty(rootForSingle))
-            rootForSingle = Directory.GetCurrentDirectory();
-        WinRarExtractor.ExtractRecursively(inputPath, rootForSingle, passwords);
-    }
-}
+//while (true)
+//{
+//    Console.WriteLine("请输入待解压文件的完整路径（回车退出）：");
+//    var inputPath = Console.ReadLine()?.Trim().Trim('"');
+//    inputPath = "D:\\FuckNew";
+//    if (string.IsNullOrWhiteSpace(inputPath) || inputPath.ContainsAny(Path.GetInvalidPathChars()))
+//    {
+//        Console.WriteLine("已退出。");
+//        break;
+//    }
+
+//    if (Directory.Exists(inputPath))
+//    {
+//        // 先清理输入路径内的空文件夹
+
+//        foreach (var file in Directory.EnumerateFiles(inputPath, "*", SearchOption.AllDirectories))
+//        {
+//            _ = FileSystemHelper.CleanEmptyDirectories(inputPath, false);
+//            WinRarExtractor.ExtractRecursively(file, inputPath, passwords);
+//        }
+//    }
+//    else
+//    {
+//        var rootForSingle = Path.GetDirectoryName(inputPath);
+//        if (string.IsNullOrEmpty(rootForSingle))
+//            rootForSingle = Directory.GetCurrentDirectory();
+//        WinRarExtractor.ExtractRecursively(inputPath, rootForSingle, passwords);
+//    }
+//}

@@ -38,7 +38,16 @@ public static class FileSystemHelper
     /// <returns></returns>
     public static string GetUniquePath(string path)
     {
-        if (!FileSystemInfo.Exists(path))
+        if (!File.Exists(path))
+        {
+            if (!Directory.Exists(path))
+                return path;
+            // 尝试清理空目录
+            _ = CleanEmptyDirectories(path, true);
+            if (!Directory.Exists(path))
+                return path;
+        }
+        if (!Exists(path))
             return path;
         var dir = Path.GetDirectoryName(path)!;
         var name = Path.GetFileNameWithoutExtension(path);
@@ -57,31 +66,8 @@ public static class FileSystemHelper
         {
             candidate = Path.Combine(dir, $"{name} ({i}){ext}");
             i++;
-        } while (FileSystemInfo.Exists(candidate));
+        } while (Exists(candidate));
         return candidate;
-    }
-
-    /// <summary>
-    /// 删除<paramref name="info"/>，如果不存在则不操作
-    /// </summary>
-    /// <param name="info"></param>
-    /// <returns>是否成功删除</returns>
-    public static bool RemoveIfExists(FileSystemInfo info)
-    {
-        try
-        {
-            if (info.Exists)
-            {
-                info.Delete();
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -113,27 +99,6 @@ public static class FileSystemHelper
             }
 
         return sum;
-    }
-
-    /// <summary>
-    /// 将移动<paramref name="source"/>为<paramref name="destPath"/>
-    /// </summary>
-    /// <param name="source"></param>
-    /// <param name="destPath">目标位置</param>
-    public static bool TryMoveEntry(FileSystemInfo source, string destPath)
-    {
-        try
-        {
-            if (Path.GetDirectoryName(destPath) is { } directory)
-                _ = Directory.CreateDirectory(directory);
-            source.MoveTo(destPath);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"移动失败（{source.FullName} -> {destPath}）：{ex.Message}");
-            return false;
-        }
     }
 
     /// <inheritdoc cref="CleanEmptyDirectoriesInternal" />
@@ -208,7 +173,7 @@ public static class FileSystemHelper
     }
 
     /// <summary>
-    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。
+    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。空文件夹直接删除
     /// </summary>
     /// <param name="root"></param>
     /// <param name="maxDepth">
@@ -261,11 +226,11 @@ public static class FileSystemHelper
                     // parent -> current -> onlyChild
                     if (current.Parent is { } parent)
                     {
-                        var childName = onlyChild.Name;
-                        if (onlyChild is FileInfo { Extension: var ext })
-                            childName = Path.GetFileNameWithoutExtension(childName);
-                        else
+                        if (onlyChild is not FileInfo { Extension: var ext, NameWithoutExtension: var childName })
+                        {
+                            childName = onlyChild.Name;
                             ext = "";
+                        }
 
                         var merge = strict switch
                         {
@@ -280,11 +245,10 @@ public static class FileSystemHelper
                         {
                             var originalPath = onlyChild.FullName;
 
-                            var suggestedDestPath = Path.Combine(parent.FullName,
-                                useParentName ? current.Name : childName).GetComparablePath();
+                            var suggestedDestPath = parent.Combine(useParentName ? current.Name : childName).GetComparablePath();
                             suggestedDestPath += ext;
 
-                            if (MoveEntryToDirectoryAndMerge(onlyChild, suggestedDestPath, useUniqueName))
+                            if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName))
                             {
                                 Console.WriteLine($"合并重复文件夹：({originalPath}, {current.FullName}) -> {onlyChild.FullName}");
 
@@ -307,59 +271,43 @@ public static class FileSystemHelper
         }
     }
 
-    /// <summary>
-    /// 将<paramref name="source"/>移动到<paramref name="suggestedDestPath"/>，若存在则空目录则合并
-    /// </summary>
-    /// <remarks>
-    /// <paramref name="source"/>可以是<paramref name="suggestedDestPath"/>的子项目（a/b/c.txt -> a = a/c.txt）
-    /// </remarks>
-    /// <param name="source"></param>
-    /// <param name="suggestedDestPath">目标位置</param>
-    /// <param name="renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name="suggestedDestPath"/></param>
-    public static bool MoveEntryToDirectoryAndMerge(FileSystemInfo source, string suggestedDestPath, bool renameWhenDuplicated)
+    /// <param name="info"></param>
+    extension(FileInfo info)
     {
-        // 异常目录
-        if (source.Parent is not { Exists: true })
-            return false;
+        public string NameWithoutExtension => Path.GetFileNameWithoutExtension(info.Name);
+    }
 
-        // 本身已在目标位置
-        if (suggestedDestPath.EqualsFileName(source.FullName))
-            return true;
+    /// <param name="info"></param>
+    extension(DirectoryInfo info)
+    {
+        public string Combine(FileInfo file) => Path.Combine(info.FullName, file.Name);
 
-        try
+        public string Combine(string fileName) => Path.Combine(info.FullName, fileName);
+
+        /// <summary>
+        /// 删除<paramref name="info"/>，如果不存在则不操作
+        /// </summary>
+        /// <returns>是否成功删除</returns>
+        public bool RemoveIfExists(bool recursive)
         {
-            if (File.Exists(suggestedDestPath))
-                throw new InvalidOperationException("目标位置有同名文件");
-
-            if (Directory.Exists(suggestedDestPath))
+            try
             {
-                var entries = Directory.GetFileSystemEntries(suggestedDestPath);
-                // 一个子项且子项是source
-                if (entries is [var onlyChild] && onlyChild.EqualsFileName(source.FullName))
-                    // 移出子项，变成空目录
-                    source.MoveTo(GetUniquePath(suggestedDestPath));
-                else if (entries.Length is not 0)
-                    throw new InvalidOperationException("目标位置已存在非空目录");
+                if (info.Exists)
+                {
+                    info.Delete(recursive);
+                    return true;
+                }
             }
-
-            source.MoveTo(suggestedDestPath);
-
-            return true;
-        }
-        catch (Exception e)
-        {
-            if (renameWhenDuplicated)
+            catch (Exception ex)
             {
-                source.MoveTo(GetUniquePath(suggestedDestPath));
-                return true;
+                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
             }
-
-            Console.WriteLine($"移动目录内容失败（{source.FullName} -> {suggestedDestPath}）：{e.Message}");
 
             return false;
         }
     }
 
+    /// <param name="info"></param>
     extension(FileSystemInfo info)
     {
         /// <inheritdoc cref="DirectoryInfo.Parent" />
@@ -389,6 +337,103 @@ public static class FileSystemHelper
 
         /// <inheritdoc cref="Directory.Exists" />
         public static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
+
+        /// <summary>
+        /// 将移动<paramref name="info"/>为<paramref name="destPath"/>
+        /// </summary>
+        /// <param name="destPath">目标位置</param>
+        public bool TryMoveTo(string destPath)
+        {
+            try
+            {
+                if (Path.GetDirectoryName(destPath) is { } directory)
+                    _ = Directory.CreateDirectory(directory);
+                info.MoveTo(destPath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"移动失败（{info.FullName} -> {destPath}）：{ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 将<paramref name="info"/>移动到<paramref name="suggestedDestPath"/>，若存在则空目录则合并
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="info"/>可以是<paramref name="suggestedDestPath"/>的子项目（a/b/c.txt -> a = a/c.txt）
+        /// </remarks>
+        /// <param name="suggestedDestPath">目标位置</param>
+        /// <param name="renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name="suggestedDestPath"/></param>
+        public bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated)
+        {
+            // 异常目录
+            if (info.Parent is not { Exists: true })
+                return false;
+
+            // 本身已在目标位置
+            if (suggestedDestPath.EqualsFileName(info.FullName))
+                return true;
+
+            try
+            {
+                if (File.Exists(suggestedDestPath))
+                    throw new InvalidOperationException("目标位置有同名文件");
+
+                if (Directory.Exists(suggestedDestPath))
+                {
+                    var entries = Directory.GetFileSystemEntries(suggestedDestPath);
+                    // 一个子项且子项是source
+                    if (entries is [var onlyChild] && onlyChild.EqualsFileName(info.FullName))
+                    {
+                        // 移出子项，变成空目录
+                        info.MoveTo(GetUniquePath(suggestedDestPath));
+                        Directory.Delete(suggestedDestPath);
+                    }
+                    else if (entries.Length is not 0)
+                        throw new InvalidOperationException("目标位置已存在非空目录");
+                }
+
+                info.MoveTo(suggestedDestPath);
+
+                return true;
+            }
+            catch (Exception e)
+            {
+                if (renameWhenDuplicated)
+                {
+                    info.MoveTo(GetUniquePath(suggestedDestPath));
+                    return true;
+                }
+
+                Console.WriteLine($"移动目录内容失败（{info.FullName} -> {suggestedDestPath}）：{e.Message}");
+
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 删除<paramref name="info"/>，如果不存在则不操作
+        /// </summary>
+        /// <returns>是否成功删除</returns>
+        public bool RemoveIfExists()
+        {
+            try
+            {
+                if (info.Exists)
+                {
+                    info.Delete();
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
+            }
+
+            return false;
+        }
     }
 
     extension(string str)
