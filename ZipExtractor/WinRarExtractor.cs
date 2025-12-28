@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text;
 
 namespace ZipExtractor;
@@ -19,10 +18,9 @@ public abstract class WinRarExtractor : ExtractorBase
     /// <summary>
     /// 递归解压压缩包，支持密码尝试
     /// </summary>
-    /// <param name="archivePath">压缩包路径</param>
-    /// <param name="rootPath">根路径</param>
+    /// <param name="archiveFile">压缩包</param>
     /// <param name="passwords">可能的密码列表</param>
-    public static void ExtractRecursively(string archivePath, string rootPath, string?[] passwords)
+    public static void ExtractRecursively(FileInfo archiveFile, string?[] passwords)
     {
         if (!File.Exists(WinRarPath))
         {
@@ -30,27 +28,13 @@ public abstract class WinRarExtractor : ExtractorBase
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(archivePath))
-        {
-            Console.WriteLine("压缩包路径不能为空");
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            Console.WriteLine("根路径不能为空");
-            return;
-        }
-
-        var archiveFile = new FileInfo(archivePath);
-
         if (!archiveFile.Exists)
         {
             Console.WriteLine($"文件不存在：{archiveFile.FullName}");
             return;
         }
 
-        var finalResults = new List<FileSystemInfo>();
+        DirectoryInfo? outputDir = null;
         var archiveQueue = new Queue<FileInfo>();
         archiveQueue.Enqueue(archiveFile);
 
@@ -63,31 +47,31 @@ public abstract class WinRarExtractor : ExtractorBase
             switch (fileType)
             {
                 case FileCompressionType.Text:
-                    Console.WriteLine($"跳过文本文件：{archivePath}");
+                    Console.WriteLine($"跳过文本文件：{currentArchive.FullName}");
                     return;
                 case FileCompressionType.Volume:
-                    Console.WriteLine($"跳过非第一的分卷：{archivePath}");
+                    Console.WriteLine($"跳过非第一的分卷：{currentArchive.FullName}");
                     return;
             }
 
+            if (currentArchive.Directory is null)
+            {
+                Console.WriteLine($"目录异常：{currentArchive.FullName}");
+                return;
+            }
+
             // 记录所有中间产生的压缩包（用于事后清理）
-            if (PrepareIntoTemp(currentArchive, fileType, out var commonPrefix) is not { } intermediateArchives)
+            // 多个分卷返回共同的目录
+            if (PrepareAndRename(currentArchive, fileType) is not { } intermediateArchive)
                 return;
 
             Console.WriteLine();
-
-            Console.WriteLine("正在解压：");
-
-            foreach (var intermediateArchive in intermediateArchives)
-                Console.WriteLine(intermediateArchive);
+            Console.WriteLine($"正在解压：{intermediateArchive.FullName}");
 
             // 解压到当前文件所在目录
-            var extractDir = currentArchive.Directory ?? TempDir;
+            var outputFolder = FileSystemHelper.GetUniquePath(currentArchive.Directory.Combine(currentArchive.NameWithoutExtension));
 
-            // 避免冲突
-            var outputFolder = FileSystemHelper.GetUniquePath(Path.Combine(extractDir.FullName, currentArchive.NameWithoutExtension));
-
-            var outputDir = Directory.CreateDirectory(outputFolder);
+            outputDir = Directory.CreateDirectory(outputFolder);
 
             // 尝试解压：先尝试无密码，再尝试提供的密码
             var status = ExtractStatus.WrongPassword;
@@ -103,16 +87,15 @@ public abstract class WinRarExtractor : ExtractorBase
             if (status is not ExtractStatus.Success)
             {
                 Console.WriteLine("解压失败，所有密码均不正确或文件损坏");
-                var cp = intermediateArchives is [_] ? "" : commonPrefix!;
-                MoveArchivesToError(intermediateArchives, cp);
-                _ = outputDir.RemoveIfExists();
+                MoveArchivesToError(intermediateArchive);
+                _ = outputDir.RemoveIfExists(true);
                 return;
             }
 
             Console.WriteLine($"密码正确，解压成功：{outputDir.FullName}");
 
             var extractedTotalSize = FileSystemHelper.GetDirectorySize(outputDir);
-            PromptCleanupIntermediates(intermediateArchives, extractedTotalSize);
+            PromptCleanupIntermediates(intermediateArchive, extractedTotalSize);
 
             var extractedFiles = outputDir.GetFiles("*", SearchOption.AllDirectories);
 
@@ -139,9 +122,6 @@ public abstract class WinRarExtractor : ExtractorBase
             if (anyOther is not null)
             {
                 Console.WriteLine($"检测到非压缩文件：{anyOther}，停止解压。");
-                finalResults.Add(extractedFiles is [{ } onlyOne]
-                    ? onlyOne
-                    : outputDir);
                 continue;
             }
 
@@ -152,7 +132,7 @@ public abstract class WinRarExtractor : ExtractorBase
 
         Console.WriteLine();
 
-        if (finalResults.Count is 0)
+        if (outputDir is null)
         {
             Console.WriteLine("解压过程异常结束");
             return;
@@ -160,21 +140,7 @@ public abstract class WinRarExtractor : ExtractorBase
 
         Console.WriteLine("所有解压完成！");
 
-        // 移动到 CompleteExt 之前：合并前三层内相邻同名且父仅含该子目录的冗余嵌套
-        foreach (var finalResult in finalResults.OfType<DirectoryInfo>())
-            FileSystemHelper.NormalizeRedundantNestedFolders(finalResult);
-
-        // 只有一个文件结果时，使用压缩包所在目录名作为目标文件夹名
-        var destDirName = finalResults switch
-        {
-            [FileInfo] when archiveFile.Directory is { } directory
-                            && !directory.FullName.EqualsFileName(TempPath)
-                            && !directory.FullName.EqualsFileName(rootPath) => directory.Name,
-            [DirectoryInfo] => "",
-            _ => Path.GetFileNameWithoutExtension(archiveFile.Name)
-        };
-
-        MoveResultsToComplete(finalResults, destDirName);
+        MoveResultsToComplete(outputDir);
     }
 
     private enum ExtractStatus
@@ -184,14 +150,14 @@ public abstract class WinRarExtractor : ExtractorBase
         Failed
     }
 
-    private static ExtractStatus ExtractWithVerify(FileInfo archivePath, DirectoryInfo outputFolder, string? password)
+    private static ExtractStatus ExtractWithVerify(FileInfo archivePath, DirectoryInfo outputDir, string? password)
     {
-        _ = ExtractCore(archivePath.FullName, outputFolder.FullName, password);
-        outputFolder.Refresh();
+        _ = ExtractCore(archivePath.FullName, outputDir.FullName, password);
+        outputDir.Refresh();
 
         // 每次解压后进行大小比例校验
         var archiveSize = archivePath.Length;
-        var extractedSize = FileSystemHelper.GetDirectorySize(outputFolder);
+        var extractedSize = FileSystemHelper.GetDirectorySize(outputDir);
         var ratio = archiveSize > 0 ? (double)extractedSize / archiveSize : 0.0;
 
         switch (ratio)
@@ -200,7 +166,7 @@ public abstract class WinRarExtractor : ExtractorBase
             {
                 if (ratio is not 0)
                     Console.WriteLine($"解压结果过小（{ratio:P2}<5%），可能密码错误，继续尝试其他密码...");
-                _ = FileSystemHelper.CleanEmptyDirectories(outputFolder, true);
+                _ = outputDir.RemoveIfExists(true);
                 return ExtractStatus.WrongPassword;
             }
             case < 0.5:
@@ -264,40 +230,26 @@ public abstract class WinRarExtractor : ExtractorBase
         }
     }
 
-    private static void MoveArchivesToError(IReadOnlyCollection<FileInfo> archiveFiles, string commonPrefix)
+    private static void MoveArchivesToError(FileSystemInfo archiveEntry)
     {
-        var destDir = ErrorPath;
-        if (!string.IsNullOrWhiteSpace(commonPrefix))
-            destDir = FileSystemHelper.GetUniquePath(Path.Combine(destDir, commonPrefix));
-        foreach (var archiveFile in archiveFiles)
-        {
-            var dest = Path.Combine(destDir, archiveFile.Name);
-            if (archiveFile.TryMoveTo(dest))
-                Console.WriteLine("已移动失败压缩包到：" + dest);
-            else
-                Console.WriteLine($"移动失败压缩包到 {nameof(ErrorPath)} 失败：{archiveFile.FullName} -> {dest}");
-        }
+        if (archiveEntry.MoveRelativePathTo(ErrorPath))
+            Console.WriteLine("已移动失败压缩包到：" + ErrorPath);
+        else
+            Console.WriteLine($"移动失败压缩包到 {nameof(ErrorPath)} 失败：{archiveEntry.FullName}");
     }
 
-    private static void MoveResultsToComplete(IReadOnlyCollection<FileSystemInfo> resultDirs, string destDirName)
+    private static void MoveResultsToComplete(DirectoryInfo resultDir)
     {
-        var destDir = CompletePath;
-        if (!string.IsNullOrWhiteSpace(destDirName))
-            destDir = FileSystemHelper.GetUniquePath(Path.Combine(destDir, destDirName));
-        foreach (var resultDir in resultDirs)
-        {
-            var dest = Path.Combine(destDir, resultDir.Name);
-            if (resultDir.TryMoveTo(dest))
-                Console.WriteLine("已移动解压结果到：" + dest);
-            else
-                Console.WriteLine($"移动解压结果到 {nameof(CompletePath)} 失败：{resultDir.FullName} -> {dest}");
-        }
+        if (resultDir.MoveRelativePathTo(CompletePath))
+            Console.WriteLine("已移动解压结果到：" + CompletePath);
+        else
+            Console.WriteLine($"移动解压结果到 {nameof(CompletePath)} 失败：{resultDir.FullName}");
     }
 
-    private static void PromptCleanupIntermediates(IReadOnlyCollection<FileInfo> intermediates, long extractedTotalSize)
+    private static void PromptCleanupIntermediates(FileSystemInfo intermediate, long extractedTotalSize)
     {
         // 自动清理判定：若解压后的总大小 >= 源文件大小的 50%，则直接清理
-        var originalArchivesSize = FileSystemHelper.GetFilesSize(intermediates);
+        var originalArchivesSize = FileSystemHelper.GetEntrySize(intermediate);
         var autoClean = originalArchivesSize > 0 && extractedTotalSize >= originalArchivesSize / 2;
         var clean = autoClean;
 
@@ -307,8 +259,7 @@ public abstract class WinRarExtractor : ExtractorBase
         {
             // 等待用户输入
             Console.WriteLine("解压后大小不到源文件的50%，请检查是否有文件未解压：");
-            foreach (var intermediate in intermediates)
-                Console.WriteLine($" - {intermediate.FullName} ({intermediate.Length} 字节)");
+            Console.WriteLine($" - {intermediate.FullName} ({originalArchivesSize} 字节)");
             Console.WriteLine("按回车键删除所有中间压缩包，按其他键保留所有文件...");
             var key = Console.ReadKey(true);
             if (key.Key is ConsoleKey.Enter)
@@ -320,11 +271,15 @@ public abstract class WinRarExtractor : ExtractorBase
             Console.WriteLine("解压后大小超过源文件的50%，自动清理中间压缩包...");
             Console.WriteLine("正在清理中间文件...");
 
-            foreach (var archive in intermediates)
-                if (archive.FullName.StartWithFileName(TempPath) && archive.RemoveIfExists())
-                    Console.WriteLine($"已删除：{archive.FullName}");
-            _ = FileSystemHelper.CleanEmptyDirectories(TempPath, false);
-            Console.WriteLine("清理完成！");
+            var r = intermediate switch
+            {
+                FileInfo file => file.RemoveIfExists(),
+                DirectoryInfo dir => dir.RemoveIfExists(true),
+                _ => false
+            };
+
+            if (r)
+                Console.WriteLine($"已删除：{intermediate.FullName}");
         }
         else
         {
@@ -332,9 +287,8 @@ public abstract class WinRarExtractor : ExtractorBase
         }
     }
 
-    private static IReadOnlyList<FileInfo>? PrepareIntoTemp(FileInfo source, FileCompressionType fileType, out string? commonPrefix)
+    private static FileSystemInfo? PrepareAndRename(FileInfo source, FileCompressionType fileType)
     {
-        commonPrefix = null;
         try
         {
             if (!source.Exists)
@@ -357,30 +311,24 @@ public abstract class WinRarExtractor : ExtractorBase
                 _ = source.TryMoveTo(newSourcePath);
             }
 
-            var list = FindSiblingSplitVolumes(source, out commonPrefix);
+            var list = FindSiblingSplitVolumes(source, out var commonPrefix);
 
-            if (list.Count is 0)
+            if (list.Count is 1)
+                return source;
+
+            if (list.Count is 0 || commonPrefix is null || source.Directory is null)
                 throw new ArgumentException(source.Name);
 
-            if (list is [var onlyVolume])
-            {
-                var destPathSingle = FileSystemHelper.GetUniquePath(Path.Combine(TempPath, onlyVolume.Name));
-                _ = source.TryMoveTo(destPathSingle);
-                return [source];
-            }
+            var destDir = new DirectoryInfo(FileSystemHelper.GetUniquePath(source.Directory.Combine(commonPrefix)));
 
-            var tempDestDir = FileSystemHelper.GetUniquePath(Path.Combine(TempPath, commonPrefix!));
-            var result = new List<FileInfo>();
-
+            // 把所有分卷移动到的同一个文件夹下
             foreach (var volume in list)
             {
-                var destPath = Path.Combine(tempDestDir, volume.Name);
+                var destPath = destDir.Combine(volume.Name);
                 _ = volume.TryMoveTo(destPath);
-                result.Add(volume);
             }
 
-            return result;
-
+            return destDir;
         }
         catch (Exception ex)
         {

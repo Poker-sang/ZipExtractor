@@ -33,38 +33,13 @@ string?[] passwords =
     "XueFc"
 ];
 
-FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir);
-FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.ErrorDir);
-FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.TempDir);
-SevenZipExtractor.ExtractAll(passwords);
+// SevenZipExtractor.ExtractAll(passwords);
 
+foreach (var file in ExtractorBase.TempDir.EnumerateFiles("*", SearchOption.AllDirectories))
+    WinRarExtractor.ExtractRecursively(file, passwords);
 
-//while (true)
-//{
-//    Console.WriteLine("请输入待解压文件的完整路径（回车退出）：");
-//    var inputPath = Console.ReadLine()?.Trim().Trim('"');
-//    inputPath = "D:\\FuckNew";
-//    if (string.IsNullOrWhiteSpace(inputPath) || inputPath.ContainsAny(Path.GetInvalidPathChars()))
-//    {
-//        Console.WriteLine("已退出。");
-//        break;
-//    }
+Console.WriteLine("等待清理...");
 
-//    if (Directory.Exists(inputPath))
-//    {
-//        // 先清理输入路径内的空文件夹
+Console.ReadKey();
 
-//        foreach (var file in Directory.EnumerateFiles(inputPath, "*", SearchOption.AllDirectories))
-//        {
-//            _ = FileSystemHelper.CleanEmptyDirectories(inputPath, false);
-//            WinRarExtractor.ExtractRecursively(file, inputPath, passwords);
-//        }
-//    }
-//    else
-//    {
-//        var rootForSingle = Path.GetDirectoryName(inputPath);
-//        if (string.IsNullOrEmpty(rootForSingle))
-//            rootForSingle = Directory.GetCurrentDirectory();
-//        WinRarExtractor.ExtractRecursively(inputPath, rootForSingle, passwords);
-//    }
-//}
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 5);

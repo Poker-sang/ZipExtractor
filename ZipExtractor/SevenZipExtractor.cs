@@ -11,18 +11,9 @@ public abstract class SevenZipExtractor : ExtractorBase
 {
     private const string SevenZipPath = @"C:\App\7-Zip\7z.exe";
 
-    // ANSI 颜色代码
-    private const string ColorReset = "\e[0m";
-    private const string ColorGreen = "\e[32m";
-    private const string ColorRed = "\e[31m";
-    private const string ColorYellow = "\e[33m";
-    private const string ColorBlue = "\e[34m";
-    private const string ColorGray = "\e[90m";
-    private const string ColorCyan = "\e[36m";
-
     private static (int ExitCode, IReadOnlyList<string> Outputs, IReadOnlyList<string> Errors)? SevenZipProcess(string arguments)
     {
-        var processStartInfo = new ProcessStartInfo()
+        var processStartInfo = new ProcessStartInfo
         {
             FileName = SevenZipPath,
             UseShellExecute = false,
@@ -68,6 +59,12 @@ public abstract class SevenZipExtractor : ExtractorBase
     /// <param name="passwords">可能的密码列表</param>
     public static void ExtractAll(IReadOnlyCollection<string?> passwords)
     {
+        if (!File.Exists(SevenZipPath))
+        {
+            Console.WriteLine($"7-Zip未找到：{SevenZipPath}");
+            return;
+        }
+
         Console.WriteLine($"{ColorCyan}=== 开始解压任务 ==={ColorReset}");
         Console.WriteLine($"{ColorGray}密码列表数量：{passwords.Count}{ColorReset}");
         var rootDir = TempDir;
@@ -118,7 +115,7 @@ public abstract class SevenZipExtractor : ExtractorBase
             if (originalArchive is { File: var originalFile })
             {
                 Console.WriteLine($"{ColorGray}  发现非压缩文件，解压完成{ColorReset}");
-                _ = MoveRelativePathTo(currDir, CompletePath);
+                _ = currDir.MoveRelativePathTo(CompletePath);
                 originalFile.Delete();
                 Console.WriteLine($"{ColorGreen}✓ 已成功解压：{originalFile.Name} -> {currDir.Name}{ColorReset}");
                 return;
@@ -148,7 +145,7 @@ public abstract class SevenZipExtractor : ExtractorBase
                 {
                     Console.WriteLine($"{ColorRed}  解压失败，移动到错误目录{ColorReset}");
                     // 解压失败，移动到错误目录
-                    _ = MoveRelativePathTo(archiveInfo.File, ErrorPath);
+                    _ = archiveInfo.File.MoveRelativePathTo(ErrorPath);
                 }
 
                 continue;
@@ -215,14 +212,14 @@ public abstract class SevenZipExtractor : ExtractorBase
         if (CheckFileFormat(archiveFile, passwords) is not { } info)
         {
             Console.WriteLine($"{ColorGray}    不是压缩文件{ColorReset}");
-            _ = MoveRelativePathTo(archiveFile, ErrorPath);
+            _ = archiveFile.MoveRelativePathTo(ErrorPath);
             return null;
         }
 
         if (info.Type is ArchiveInfo.Format.Other)
         {
             Console.WriteLine($"{ColorYellow}    不支持的压缩格式{ColorReset}");
-            _ = MoveRelativePathTo(archiveFile, ErrorPath);
+            _ = archiveFile.MoveRelativePathTo(ErrorPath);
             return null;
         }
 
@@ -359,17 +356,6 @@ public abstract class SevenZipExtractor : ExtractorBase
         foreach (var foundVolume in volumesInfo.FoundVolumes)
             _ = foundVolume.File.TryMoveTo(FileSystemHelper.GetUniquePath(Path.Combine(destPath, foundVolume.File.Name)));
     }
-
-    private static bool MoveRelativePathTo(FileSystemInfo file, string toPath, string fromPath = TempPath, bool moveToUniquePath = true)
-    {
-        var relativePath = Path.GetRelativePath(fromPath, file.FullName);
-        var dest = Path.Combine(toPath, relativePath);
-        if (moveToUniquePath)
-            dest = FileSystemHelper.GetUniquePath(dest);
-        return file.TryMoveTo(dest);
-    }
-
-    #region 7Z
 
     private static ArchiveInfo? CheckFileFormat(FileInfo file, IReadOnlyCollection<string?> passwords)
     {
@@ -547,6 +533,4 @@ public abstract class SevenZipExtractor : ExtractorBase
         /// </summary>
         Failed
     }
-
-    #endregion
 }

@@ -70,6 +70,17 @@ public static class FileSystemHelper
         return candidate;
     }
 
+    public static long GetEntrySize(FileSystemInfo entry)
+    {
+        return entry.Exists
+            ? entry is FileInfo fileInfo
+                ? fileInfo.Length
+                : entry is DirectoryInfo directoryInfo
+                    ? GetDirectorySize(directoryInfo)
+                    : 0
+            : 0;
+    }
+
     /// <summary>
     /// 获取目录总大小
     /// </summary>
@@ -236,8 +247,8 @@ public static class FileSystemHelper
                         {
                             RedundantThreshold.Equal => onlyChild.Name.EqualsFileName(current.Name),
                             RedundantThreshold.Always => true,
-                            RedundantThreshold.ContainsParent => current.Name.ContainsFileName(childName),
-                            RedundantThreshold.ContainsChild => childName.ContainsFileName(current.Name),
+                            RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
+                            RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
                             _ => false
                         };
 
@@ -366,7 +377,7 @@ public static class FileSystemHelper
         /// </remarks>
         /// <param name="suggestedDestPath">目标位置</param>
         /// <param name="renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name="suggestedDestPath"/></param>
-        public bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated)
+        private bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated)
         {
             // 异常目录
             if (info.Parent is not { Exists: true })
@@ -433,6 +444,15 @@ public static class FileSystemHelper
             }
 
             return false;
+        }
+
+        public bool MoveRelativePathTo(string toPath, string fromPath = ExtractorBase.TempPath, bool moveToUniquePath = true)
+        {
+            var relativePath = Path.GetRelativePath(fromPath, info.FullName);
+            var dest = Path.Combine(toPath, relativePath);
+            if (moveToUniquePath)
+                dest = GetUniquePath(dest);
+            return info.TryMoveTo(dest);
         }
     }
 
