@@ -27,6 +27,7 @@ string?[] passwords =
     "⑨",
     "nameless",
     "south-plus",
+    "tuyile2026.!2333",
     "tuyile2025.!2333",
     "图一乐讨厌倒狗",
     "mm666",
@@ -34,6 +35,7 @@ string?[] passwords =
 ];
 
 // SevenZipExtractor.ExtractAll(passwords);
+FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
 
 foreach (var file in ExtractorBase.TempDir.EnumerateFiles("*", SearchOption.AllDirectories))
     WinRarExtractor.ExtractRecursively(file, passwords);
@@ -42,4 +44,7 @@ Console.WriteLine("等待清理...");
 
 Console.ReadKey();
 
-FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 5);
+FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
+
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 5,
+    FileSystemHelper.RedundantThreshold.Always);

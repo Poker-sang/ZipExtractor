@@ -69,7 +69,7 @@ public abstract class WinRarExtractor : ExtractorBase
             Console.WriteLine($"正在解压：{intermediateArchive.FullName}");
 
             // 解压到当前文件所在目录
-            var outputFolder = FileSystemHelper.GetUniquePath(currentArchive.Directory.Combine(currentArchive.NameWithoutExtension));
+            var outputFolder = FileSystemHelper.GetUniquePath(intermediateArchive.Parent.Combine(intermediateArchive.NameWithoutExtension));
 
             outputDir = Directory.CreateDirectory(outputFolder);
 
@@ -501,7 +501,7 @@ public abstract class WinRarExtractor : ExtractorBase
                     break;
                 }
                 // 5) 单个压缩包
-                case (null, "rar" or "7z"):
+                case (_, "rar" or "7z"):
                     return [file];
             }
         }

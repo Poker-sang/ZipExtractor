@@ -283,12 +283,6 @@ public static class FileSystemHelper
     }
 
     /// <param name="info"></param>
-    extension(FileInfo info)
-    {
-        public string NameWithoutExtension => Path.GetFileNameWithoutExtension(info.Name);
-    }
-
-    /// <param name="info"></param>
     extension(DirectoryInfo info)
     {
         public string Combine(FileInfo file) => Path.Combine(info.FullName, file.Name);
@@ -321,14 +315,16 @@ public static class FileSystemHelper
     /// <param name="info"></param>
     extension(FileSystemInfo info)
     {
+        public string NameWithoutExtension => Path.GetFileNameWithoutExtension(info.Name);
+
         /// <inheritdoc cref="DirectoryInfo.Parent" />
-        public DirectoryInfo? Parent =>
+        public DirectoryInfo Parent =>
             info switch
             {
                 DirectoryInfo dirInfo => dirInfo.Parent,
                 FileInfo fileInfo => fileInfo.Directory,
                 _ => null
-            };
+            } ?? throw new InvalidOperationException("FileSystemInfo has no parent");
 
         /// <inheritdoc cref="DirectoryInfo.MoveTo" />
         public void MoveTo(string destPath)
