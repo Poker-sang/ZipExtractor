@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Microsoft.VisualBasic.FileIO;
+using SearchOption = System.IO.SearchOption;
 
 namespace ZipExtractor;
 
@@ -225,7 +227,7 @@ public static class FileSystemHelper
                 // current -> 空
                 case []:
                 {
-                    current.Delete(false);
+                    current.Delete();
                     break;
                 }
                 // current -> onlyChild
@@ -283,6 +285,38 @@ public static class FileSystemHelper
     }
 
     /// <param name="info"></param>
+    extension(FileInfo info)
+    {
+        /// <summary>
+        /// 删除<paramref name="info"/>，如果不存在则不操作
+        /// </summary>
+        /// <returns>是否成功删除</returns>
+        public bool RemoveIfExists(bool moveToRecycleBin = false)
+        {
+            try
+            {
+                if (info.Exists)
+                {
+                    if (moveToRecycleBin)
+                        FileSystem.DeleteFile(
+                            info.FullName,
+                            UIOption.OnlyErrorDialogs,
+                            RecycleOption.SendToRecycleBin);
+                    else
+                        info.Delete();
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
+            }
+
+            return false;
+        }
+    }
+
+    /// <param name="info"></param>
     extension(DirectoryInfo info)
     {
         public string Combine(FileInfo file) => Path.Combine(info.FullName, file.Name);
@@ -293,13 +327,19 @@ public static class FileSystemHelper
         /// 删除<paramref name="info"/>，如果不存在则不操作
         /// </summary>
         /// <returns>是否成功删除</returns>
-        public bool RemoveIfExists(bool recursive)
+        public bool RemoveIfExists(bool recursive, bool moveToRecycleBin = false)
         {
             try
             {
                 if (info.Exists)
                 {
-                    info.Delete(recursive);
+                    if (moveToRecycleBin)
+                        FileSystem.DeleteDirectory(
+                            info.FullName,
+                            UIOption.OnlyErrorDialogs,
+                            RecycleOption.SendToRecycleBin);
+                    else
+                        info.Delete(recursive);
                     return true;
                 }
             }
@@ -418,28 +458,6 @@ public static class FileSystemHelper
 
                 return false;
             }
-        }
-
-        /// <summary>
-        /// 删除<paramref name="info"/>，如果不存在则不操作
-        /// </summary>
-        /// <returns>是否成功删除</returns>
-        public bool RemoveIfExists()
-        {
-            try
-            {
-                if (info.Exists)
-                {
-                    info.Delete();
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
-            }
-
-            return false;
         }
 
         public bool MoveRelativePathTo(string toPath, string fromPath = ExtractorBase.TempPath, bool moveToUniquePath = true)

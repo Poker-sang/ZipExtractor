@@ -20,7 +20,8 @@ public abstract class WinRarExtractor : ExtractorBase
     /// </summary>
     /// <param name="archiveFile">压缩包</param>
     /// <param name="passwords">可能的密码列表</param>
-    public static void ExtractRecursively(FileInfo archiveFile, string?[] passwords)
+    /// <param name="moveToRecycleBin">解压原文件送入回收站而不是直接删除</param>
+    public static void ExtractRecursively(FileInfo archiveFile, IReadOnlyCollection<string?> passwords, bool moveToRecycleBin = true)
     {
         if (!File.Exists(WinRarPath))
         {
@@ -95,7 +96,8 @@ public abstract class WinRarExtractor : ExtractorBase
             Console.WriteLine($"密码正确，解压成功：{outputDir.FullName}");
 
             var extractedTotalSize = FileSystemHelper.GetDirectorySize(outputDir);
-            PromptCleanupIntermediates(intermediateArchive, extractedTotalSize);
+            PromptCleanupIntermediates(intermediateArchive, extractedTotalSize, moveToRecycleBin);
+            moveToRecycleBin = false;
 
             var extractedFiles = outputDir.GetFiles("*", SearchOption.AllDirectories);
 
@@ -246,7 +248,7 @@ public abstract class WinRarExtractor : ExtractorBase
             Console.WriteLine($"移动解压结果到 {nameof(CompletePath)} 失败：{resultDir.FullName}");
     }
 
-    private static void PromptCleanupIntermediates(FileSystemInfo intermediate, long extractedTotalSize)
+    private static void PromptCleanupIntermediates(FileSystemInfo intermediate, long extractedTotalSize, bool moveToRecycleBin)
     {
         // 自动清理判定：若解压后的总大小 >= 源文件大小的 50%，则直接清理
         var originalArchivesSize = FileSystemHelper.GetEntrySize(intermediate);
@@ -273,8 +275,8 @@ public abstract class WinRarExtractor : ExtractorBase
 
             var r = intermediate switch
             {
-                FileInfo file => file.RemoveIfExists(),
-                DirectoryInfo dir => dir.RemoveIfExists(true),
+                FileInfo file => file.RemoveIfExists(true),
+                DirectoryInfo dir => dir.RemoveIfExists(true, true),
                 _ => false
             };
 

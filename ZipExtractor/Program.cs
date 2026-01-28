@@ -28,7 +28,6 @@ string?[] passwords =
     "nameless",
     "south-plus",
     "tuyile2026.!2333",
-    "tuyile2025.!2333",
     "图一乐讨厌倒狗",
     "mm666",
     "XueFc"
@@ -46,5 +45,5 @@ Console.ReadKey();
 
 FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
 
-FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 5,
-    FileSystemHelper.RedundantThreshold.Always);
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 20,
+    FileSystemHelper.RedundantThreshold.Always, true);
