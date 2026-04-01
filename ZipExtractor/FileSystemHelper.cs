@@ -220,6 +220,12 @@ public static class FileSystemHelper
                 // current -> a, b, c, ...
                 case { Length: > 1 }:
                 {
+                    if (entries.OfType<FileInfo>().Any(t => t.Extension is ".dll" or ".exe"or ".bin"))
+                    {
+                        Console.WriteLine($"跳过游戏文件夹：({current.FullName})");
+                        break;
+                    }
+
                     foreach (var directory in entries.OfType<DirectoryInfo>())
                         NormalizeRedundantNestedFoldersCore(directory, maxDepth - 1, strict, useParentName, useUniqueName);
                     break;
