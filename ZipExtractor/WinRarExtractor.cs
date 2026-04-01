@@ -111,7 +111,8 @@ public abstract class WinRarExtractor : ExtractorBase
                 if (type is FileCompressionType.First 
                     or FileCompressionType.Rar
                     or FileCompressionType.Zip
-                    or FileCompressionType._7Z)
+                    or FileCompressionType._7Z
+                    or FileCompressionType.OtherSingle)
                     archiveCandidates.Add(file);
 
                 if (type is FileCompressionType.Other)
@@ -299,6 +300,7 @@ public abstract class WinRarExtractor : ExtractorBase
             if (fileType is FileCompressionType.Zip
                 or FileCompressionType._7Z
                 or FileCompressionType.Rar
+                or FileCompressionType.OtherSingle
                 or FileCompressionType.Other)
             {
                 // 按规则重命名
@@ -352,19 +354,24 @@ public abstract class WinRarExtractor : ExtractorBase
         Volume,
 
         /// <summary>
-        /// z开头或p结尾
+        /// z开头或p结尾（单卷）
         /// </summary>
         Zip,
 
         /// <summary>
-        /// 7开头或z结尾
+        /// 7开头或z结尾（单卷）
         /// </summary>
         _7Z,
 
         /// <summary>
-        /// r开头或r结尾
+        /// r开头或r结尾（单卷）
         /// </summary>
         Rar,
+
+        /// <summary>
+        /// 其他单卷
+        /// </summary>
+        OtherSingle,
 
         /// <summary>
         /// 其他文件
@@ -381,44 +388,35 @@ public abstract class WinRarExtractor : ExtractorBase
     {
         var (ext1, ext2) = FileSystemHelper.GetLastTwoExtensions(file.Name.ToLower());
 
-        // 文本文件且小于1MB
-        if (ext2 is "txt" or "md" && file.Length < 1 << 20)
-            return FileCompressionType.Text;
-
-        // part1.rar/part2.rar
-        if (ext2 is "rar" && ext1 is ['p', 'a', 'r', 't', .. var idx] && int.TryParse(idx, out var result1))
-            return result1 > 1 ? FileCompressionType.Volume : FileCompressionType.First;
-
         // 检查是否为第一卷
         if (_SingleArchiveOrFirstVolumeExtensions.Contains('.' + ext2))
             return FileCompressionType.First;
 
-        switch (ext1)
-        {
-            // 7z.001
-            case "7z" when int.TryParse(ext2, out var result4):
-                return result4 > 1 ? FileCompressionType.Volume : FileCompressionType.First;
-            // zip.001/zipx.001
-            case "zip" or "zipx" when int.TryParse(ext2, out _):
-                return FileCompressionType.Volume;
-        }
-
         return ext2 switch
         {
+            // 无后缀名且大于1MB，认为是压缩文件
+            null when file.Length > 1 << 20 => FileCompressionType.OtherSingle,
+            // 文本文件且小于1MB
+            "txt" or "md" when file.Length < 1 << 20 => FileCompressionType.Text,
+            // part1.rar/part2.rar
+            "rar" when ext1 is ['p', 'a', 'r', 't', .. var idx] && int.TryParse(idx, out var result1) =>
+                result1 > 1 ? FileCompressionType.Volume : FileCompressionType.First,
             // z01
-            ['z', .. { Length: >= 2 } remains]
-                when int.TryParse(remains, out _) => FileCompressionType.Volume,
+            ['z', .. { Length: >= 2 } remains] when int.TryParse(remains, out _) => FileCompressionType.Volume,
             // r00/r01
-            ['r', .. { Length: >= 2 } remains]
-                when int.TryParse(remains, out var result2) =>
-                result2 > 0
+            ['r', .. { Length: >= 2 } remains] when int.TryParse(remains, out var result2) => result2 > 0
+                ? FileCompressionType.Volume
+                : FileCompressionType.First,
+            ['z', ..] or [.., 'p'] => FileCompressionType.Zip,
+            ['7', ..] or [.., 'z'] => FileCompressionType._7Z,
+            ['r', ..] or [.., 'r'] => FileCompressionType.Rar,
+            _ => ext1 switch
+            {
+                "7z" when int.TryParse(ext2, out var result4) => result4 > 1
                     ? FileCompressionType.Volume
                     : FileCompressionType.First,
-            _ => ext2 switch
-            {
-                ['z', ..] or [.., 'p'] => FileCompressionType.Zip,
-                ['7', ..] or [.., 'z'] => FileCompressionType._7Z,
-                ['r', ..] or [.., 'r'] => FileCompressionType.Rar,
+                // zip.001/zipx.001
+                "zip" or "zipx" when int.TryParse(ext2, out _) => FileCompressionType.Volume,
                 _ => FileCompressionType.Other
             }
         };

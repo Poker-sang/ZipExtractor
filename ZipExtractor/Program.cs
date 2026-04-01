@@ -30,7 +30,10 @@ string?[] passwords =
     "tuyile2026.!2333",
     "图一乐讨厌倒狗",
     "mm666",
-    "XueFc"
+    "XueFc",
+    "sixpluswan",
+    "2A46M-5",
+    "chaola"
 ];
 
 // SevenZipExtractor.ExtractAll(passwords);
