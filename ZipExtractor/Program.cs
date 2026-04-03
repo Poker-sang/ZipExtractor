@@ -11,6 +11,7 @@ string?[] passwords =
     "yecgaa",
     "Drgon Slayer",
     "病名为祈",
+    "2A46M-5",
     "shiki",
     "Geass",
     "hmoe.top",
@@ -20,24 +21,20 @@ string?[] passwords =
     "hihihiha",
     "LSFS",
     "dx",
-    "梅酱",
     "GS_mel",
     "xxld",
-    "6666",
     "⑨",
     "nameless",
     "south-plus",
     "tuyile2026.!2333",
     "图一乐讨厌倒狗",
-    "mm666",
     "XueFc",
-    "sixpluswan",
-    "2A46M-5",
-    "chaola"
+    "sixpluswan"
 ];
 
-// SevenZipExtractor.ExtractAll(passwords);
 FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
+
+// SevenZipExtractor.ExtractAll(passwords);
 
 foreach (var file in ExtractorBase.TempDir.EnumerateFiles("*", SearchOption.AllDirectories))
     WinRarExtractor.ExtractRecursively(file, passwords);

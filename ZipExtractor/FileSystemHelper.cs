@@ -9,6 +9,10 @@ namespace ZipExtractor;
 
 public static class FileSystemHelper
 {
+    private static void Log(string message) => Console.WriteLine(message);
+
+    private static void Log(Exception ex, string message) => Log($"{message}：{ex.Message}");
+
     /// <summary>
     /// 获取文件名的最后两个扩展名
     /// </summary>
@@ -125,7 +129,8 @@ public static class FileSystemHelper
     {
         var count = CleanEmptyDirectoriesInternal(root, includeRoot);
         if (count is not 0)
-            Console.WriteLine($"已删除 {root.FullName} 内空文件夹 {count} 个。");
+            Log($"已删除 {root.FullName} 内空文件夹 {count} 个。");
+
         return count;
     }
 
@@ -153,7 +158,7 @@ public static class FileSystemHelper
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"清理 {root} 空文件夹时出错：{ex.Message}");
+            Log(ex, $"清理 {root} 空文件夹时出错");
         }
 
         return count;
@@ -222,7 +227,7 @@ public static class FileSystemHelper
                 {
                     if (entries.OfType<FileInfo>().Any(t => t.Extension is ".dll" or ".exe"or ".bin"))
                     {
-                        Console.WriteLine($"跳过游戏文件夹：({current.FullName})");
+                        Log($"跳过游戏文件夹：({current.FullName})");
                         break;
                     }
 
@@ -245,6 +250,9 @@ public static class FileSystemHelper
                     // parent -> current -> onlyChild
                     if (current.Parent is { } parent)
                     {
+                        // childName:
+                        // File -> Name without extension
+                        // Directory -> Name
                         if (onlyChild is not FileInfo { Extension: var ext, NameWithoutExtension: var childName })
                         {
                             childName = onlyChild.Name;
@@ -253,7 +261,7 @@ public static class FileSystemHelper
 
                         var merge = strict switch
                         {
-                            RedundantThreshold.Equal => onlyChild.Name.EqualsFileName(current.Name),
+                            RedundantThreshold.Equal => childName.EqualsFileName(current.Name),
                             RedundantThreshold.Always => true,
                             RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
                             RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
@@ -269,7 +277,7 @@ public static class FileSystemHelper
 
                             if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName))
                             {
-                                Console.WriteLine($"合并重复文件夹：({originalPath}, {current.FullName}) -> {onlyChild.FullName}");
+                                Log($"合并重复文件夹：({originalPath}, {current.FullName}) -> {onlyChild.FullName}");
 
                                 // 若成功移动，则此时onlyChild已和current在同一目录下
                                 // 移出OnlyChild后，root变为空目录，删除它
@@ -315,7 +323,7 @@ public static class FileSystemHelper
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
+                Log(ex, $"删除失败 {info.FullName}");
             }
 
             return false;
@@ -351,7 +359,7 @@ public static class FileSystemHelper
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"删除失败 {info.FullName}：{ex.Message}");
+                Log(ex, $"删除失败 {info.FullName}");
             }
 
             return false;
@@ -406,7 +414,7 @@ public static class FileSystemHelper
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"移动失败（{info.FullName} -> {destPath}）：{ex.Message}");
+                Log(ex, $"移动失败（{info.FullName} -> {destPath}）");
                 return false;
             }
         }
@@ -460,7 +468,7 @@ public static class FileSystemHelper
                     return true;
                 }
 
-                Console.WriteLine($"移动目录内容失败（{info.FullName} -> {suggestedDestPath}）：{e.Message}");
+                Log($"移动目录内容失败（{info.FullName} -> {suggestedDestPath}）：{e.Message}");
 
                 return false;
             }
