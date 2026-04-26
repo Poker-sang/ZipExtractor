@@ -47,8 +47,8 @@ public abstract class WinRarExtractor : ExtractorBase
             var fileType = CheckFileCompressionType(currentArchive);
             switch (fileType)
             {
-                case FileCompressionType.Text:
-                    Console.WriteLine($"跳过文本文件：{currentArchive.FullName}");
+                case FileCompressionType.Skip:
+                    Console.WriteLine($"跳过文件：{currentArchive.FullName}");
                     return;
                 case FileCompressionType.Volume:
                     Console.WriteLine($"跳过非第一的分卷：{currentArchive.FullName}");
@@ -379,9 +379,9 @@ public abstract class WinRarExtractor : ExtractorBase
         Other,
 
         /// <summary>
-        /// 文本文件
+        /// 跳过文件
         /// </summary>
-        Text
+        Skip
     }
 
     private static FileCompressionType CheckFileCompressionType(FileInfo file)
@@ -396,8 +396,10 @@ public abstract class WinRarExtractor : ExtractorBase
         {
             // 无后缀名且大于1MB，认为是压缩文件
             null when file.Length > 1 << 20 => FileCompressionType.OtherSingle,
-            // 文本文件且小于1MB
-            "txt" or "md" when file.Length < 1 << 20 => FileCompressionType.Text,
+            // 百度网盘下载文件
+            "downloading" => FileCompressionType.Skip,
+            // 小于1MB的文本文件
+            "txt" or "md" when file.Length < 1 << 20 => FileCompressionType.Skip,
             // part1.rar/part2.rar
             "rar" when ext1 is ['p', 'a', 'r', 't', .. var idx] && int.TryParse(idx, out var result1) =>
                 result1 > 1 ? FileCompressionType.Volume : FileCompressionType.First,

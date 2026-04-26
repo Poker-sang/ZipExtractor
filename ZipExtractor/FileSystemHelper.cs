@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Microsoft.VisualBasic.FileIO;
@@ -193,7 +194,7 @@ public static class FileSystemHelper
     /// <summary>
     /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。空文件夹直接删除
     /// </summary>
-    /// <param name="root"></param>
+    /// <param name="root">根目录不会被合并/删除</param>
     /// <param name="maxDepth">
     /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
     /// 每增加1，表示允许递归继续向下处理一层子目录。
@@ -209,11 +210,17 @@ public static class FileSystemHelper
         bool useUniqueName = false)
     {
         CleanEmptyDirectories(root, false);
-        NormalizeRedundantNestedFoldersCore(root, maxDepth, strict, useParentName, useUniqueName);
+        foreach (var directoryInfo in root.GetDirectories())
+            NormalizeRedundantNestedFoldersCore(directoryInfo, maxDepth, strict, useParentName, useUniqueName, out _);
     }
 
-    private static void NormalizeRedundantNestedFoldersCore(DirectoryInfo current, int maxDepth, RedundantThreshold strict, bool useParentName, bool useUniqueName)
+    /// <inheritdoc cref="NormalizeRedundantNestedFolders" />
+    /// <param name="current">当前目录</param>
+    /// <param name="newCurrent">若当前目录被合并，则返回新的代替项；若被删除则返回<see langword="null"/></param>
+    [SuppressMessage("ReSharper", "InvalidXmlDocComment")]
+    private static void NormalizeRedundantNestedFoldersCore(DirectoryInfo current, int maxDepth, RedundantThreshold strict, bool useParentName, bool useUniqueName, out FileSystemInfo? newCurrent)
     {
+        newCurrent = current;
         if (maxDepth <= 0 || !current.Exists)
             return;
         try
@@ -232,20 +239,21 @@ public static class FileSystemHelper
                     }
 
                     foreach (var directory in entries.OfType<DirectoryInfo>())
-                        NormalizeRedundantNestedFoldersCore(directory, maxDepth - 1, strict, useParentName, useUniqueName);
+                        NormalizeRedundantNestedFoldersCore(directory, maxDepth - 1, strict, useParentName, useUniqueName, out _);
                     break;
                 }
                 // current -> 空
                 case []:
                 {
                     current.Delete();
+                    newCurrent = null;
                     break;
                 }
                 // current -> onlyChild
                 case [var onlyChild]:
                 {
                     if (onlyChild is DirectoryInfo directoryInfo)
-                        NormalizeRedundantNestedFoldersCore(directoryInfo, maxDepth - 1, strict, useParentName, useUniqueName);
+                        NormalizeRedundantNestedFoldersCore(directoryInfo, maxDepth - 1, strict, useParentName, useUniqueName, out onlyChild);
 
                     // parent -> current -> onlyChild
                     if (current.Parent is { } parent)
@@ -284,6 +292,7 @@ public static class FileSystemHelper
                                 // 判断名称是否相等，以防删除onlyChild
                                 if (!onlyChild.Name.EqualsFileName(current.Name))
                                     current.Delete();
+                                newCurrent = onlyChild;
                             }
                         }
                     }
