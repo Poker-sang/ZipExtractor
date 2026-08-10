@@ -192,6 +192,79 @@ public static class FileSystemHelper
     }
 
     /// <summary>
+    /// 判断当前文件夹是否需要和它的唯一子项合并。
+    /// </summary>
+    /// <param name="current">当前文件夹</param>
+    /// <param name="onlyChild">当前文件夹的唯一子项</param>
+    /// <param name="mergedNameWithoutExtension">合并后的目标基础名；当唯一子项为文件时会自动保留原扩展名</param>
+    /// <returns>是否合并</returns>
+    public delegate bool ShouldMergeNestedFolder(DirectoryInfo current, FileSystemInfo onlyChild, out string mergedNameWithoutExtension);
+
+    /// <summary>
+    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且当前文件夹/唯一子项符合 <paramref name="shouldMerge"/>”的相邻两层合并。空文件夹直接删除
+    /// </summary>
+    /// <param name="root">根目录不会被合并/删除</param>
+    /// <param name="shouldMerge">判断当前文件夹是否需要和它的唯一子项合并，参数为当前文件夹和它的唯一子项</param>
+    /// <param name="maxDepth">
+    /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
+    /// 每增加1，表示允许递归继续向下处理一层子目录。
+    /// </param>
+    /// <param name="useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
+    public static void NormalizeMatchedNestedFolders(
+        DirectoryInfo root,
+        ShouldMergeNestedFolder shouldMerge,
+        int maxDepth = 3,
+        bool useUniqueName = false)
+    {
+        ArgumentNullException.ThrowIfNull(shouldMerge);
+
+        CleanEmptyDirectories(root, false);
+        foreach (var directoryInfo in root.GetDirectories())
+            NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth, shouldMerge, useUniqueName, out _);
+    }
+
+    /// <summary>
+    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“名称包含 <paramref name="namePart"/>，且符合合并标准”的文件夹与相邻层合并。合并后使用另一侧名称
+    /// </summary>
+    /// <param name="root">根目录不会被合并/删除</param>
+    /// <param name="namePart">当前文件夹名称需要包含的字符串，如“新建文件夹”</param>
+    /// <param name="maxDepth">
+    /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
+    /// 每增加1，表示允许递归继续向下处理一层子目录。
+    /// </param>
+    /// <param name="useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
+    public static void NormalizeNestedFoldersContainingName(
+        DirectoryInfo root,
+        string namePart,
+        int maxDepth = 3,
+        bool useUniqueName = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namePart);
+
+        NormalizeMatchedNestedFolders(
+            root,
+            (current, onlyChild, out mergedNameWithoutExtension) =>
+            {
+                var (childName, _) = GetMergedChildName(onlyChild);
+                var currentMatches = current.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
+
+                if (currentMatches)
+                {
+                    mergedNameWithoutExtension = childName;
+                    return true;
+                }
+
+                mergedNameWithoutExtension = current.Name;
+                var childMatches = onlyChild is DirectoryInfo childDirectory
+                                   && childDirectory.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
+
+                return childMatches;
+            },
+            maxDepth,
+            useUniqueName);
+    }
+
+    /// <summary>
     /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。空文件夹直接删除
     /// </summary>
     /// <param name="root">根目录不会被合并/删除</param>
@@ -209,16 +282,30 @@ public static class FileSystemHelper
         bool useParentName = false,
         bool useUniqueName = false)
     {
-        CleanEmptyDirectories(root, false);
-        foreach (var directoryInfo in root.GetDirectories())
-            NormalizeRedundantNestedFoldersCore(directoryInfo, maxDepth, strict, useParentName, useUniqueName, out _);
+        NormalizeMatchedNestedFolders(
+            root,
+            (current, onlyChild, out mergedNameWithoutExtension) =>
+            {
+                var (childName, _) = GetMergedChildName(onlyChild);
+                mergedNameWithoutExtension = useParentName ? current.Name : childName;
+                return strict switch
+                {
+                    RedundantThreshold.Equal => childName.EqualsFileName(current.Name),
+                    RedundantThreshold.Always => true,
+                    RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
+                    RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
+                    _ => false
+                };
+            },
+            maxDepth,
+            useUniqueName);
     }
 
-    /// <inheritdoc cref="NormalizeRedundantNestedFolders" />
+    /// <inheritdoc cref="NormalizeMatchedNestedFolders(DirectoryInfo, ShouldMergeNestedFolder, int, bool)" />
     /// <param name="current">当前目录</param>
     /// <param name="newCurrent">若当前目录被合并，则返回新的代替项；若被删除则返回<see langword="null"/></param>
     [SuppressMessage("ReSharper", "InvalidXmlDocComment")]
-    private static void NormalizeRedundantNestedFoldersCore(DirectoryInfo current, int maxDepth, RedundantThreshold strict, bool useParentName, bool useUniqueName, out FileSystemInfo? newCurrent)
+    private static void NormalizeMatchedNestedFoldersCore(DirectoryInfo current, int maxDepth, ShouldMergeNestedFolder shouldMerge, bool useUniqueName, out FileSystemInfo? newCurrent)
     {
         newCurrent = current;
         if (maxDepth <= 0 || !current.Exists)
@@ -232,14 +319,14 @@ public static class FileSystemHelper
                 // current -> a, b, c, ...
                 case { Length: > 1 }:
                 {
-                    if (entries.OfType<FileInfo>().Any(t => t.Extension is ".dll" or ".exe"or ".bin"))
+                    if (IsGameFolder(entries))
                     {
                         Log($"跳过游戏文件夹：({current.FullName})");
                         break;
                     }
 
                     foreach (var directory in entries.OfType<DirectoryInfo>())
-                        NormalizeRedundantNestedFoldersCore(directory, maxDepth - 1, strict, useParentName, useUniqueName, out _);
+                        NormalizeMatchedNestedFoldersCore(directory, maxDepth - 1, shouldMerge, useUniqueName, out _);
                     break;
                 }
                 // current -> 空
@@ -253,7 +340,18 @@ public static class FileSystemHelper
                 case [var onlyChild]:
                 {
                     if (onlyChild is DirectoryInfo directoryInfo)
-                        NormalizeRedundantNestedFoldersCore(directoryInfo, maxDepth - 1, strict, useParentName, useUniqueName, out onlyChild);
+                        NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth - 1, shouldMerge, useUniqueName, out onlyChild);
+
+                    if (onlyChild is null)
+                    {
+                        if (current.Exists && current.GetFileSystemInfos("*", SearchOption.TopDirectoryOnly).Length is 0)
+                        {
+                            current.Delete();
+                            newCurrent = null;
+                        }
+
+                        break;
+                    }
 
                     // parent -> current -> onlyChild
                     if (current.Parent is { } parent)
@@ -261,27 +359,15 @@ public static class FileSystemHelper
                         // childName:
                         // File -> Name without extension
                         // Directory -> Name
-                        if (onlyChild is not FileInfo { Extension: var ext, NameWithoutExtension: var childName })
-                        {
-                            childName = onlyChild.Name;
-                            ext = "";
-                        }
-
-                        var merge = strict switch
-                        {
-                            RedundantThreshold.Equal => childName.EqualsFileName(current.Name),
-                            RedundantThreshold.Always => true,
-                            RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
-                            RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
-                            _ => false
-                        };
+                        var (_, ext) = GetMergedChildName(onlyChild);
+                        var merge = shouldMerge(current, onlyChild, out var mergedNameWithoutExtension);
 
                         if (merge)
                         {
                             var originalPath = onlyChild.FullName;
 
-                            var suggestedDestPath = parent.Combine(useParentName ? current.Name : childName).GetComparablePath();
-                            suggestedDestPath += ext;
+                            var suggestedDestPath = parent.Combine(mergedNameWithoutExtension).GetComparablePath();
+                            suggestedDestPath += ext is null ? null : "." + ext;
 
                             if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName))
                             {
@@ -305,6 +391,20 @@ public static class FileSystemHelper
         {
             // ignored
         }
+    }
+
+    private static bool IsGameFolder(IEnumerable<FileSystemInfo> entries)
+    {
+        return entries
+            .OfType<FileInfo>()
+            .Any(t => t.Extension is ".dll" or ".exe" or ".bin");
+    }
+
+    private static (string Name, string? Extension) GetMergedChildName(FileSystemInfo entry)
+    {
+        return entry is FileInfo file
+            ? GetExtension(file.Name)
+            : (entry.Name, null);
     }
 
     /// <param name="info"></param>

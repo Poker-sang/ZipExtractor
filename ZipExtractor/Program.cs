@@ -29,7 +29,8 @@ string?[] passwords =
     "tuyile2026.!2333",
     "图一乐讨厌倒狗",
     "XueFc",
-    "sixpluswan"
+    "sixpluswan",
+    "米粒儿"
 ];
 
 FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
@@ -41,9 +42,13 @@ foreach (var file in ExtractorBase.TempDir.EnumerateFiles("*", SearchOption.AllD
 
 Console.WriteLine("等待清理...");
 
-Console.ReadKey();
-
 FileSystemHelper.CleanEmptyDirectories(ExtractorBase.TempDir, false);
 
+FileSystemHelper.NormalizeNestedFoldersContainingName(ExtractorBase.CompleteDir, "新建文件夹", 20);
+
+FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 20);
+
+Console.ReadKey();
+
 FileSystemHelper.NormalizeRedundantNestedFolders(ExtractorBase.CompleteDir, 20,
-    FileSystemHelper.RedundantThreshold.Always, true);
+    FileSystemHelper.RedundantThreshold.Always);
