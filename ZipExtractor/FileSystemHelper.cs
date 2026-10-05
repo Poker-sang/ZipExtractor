@@ -4,20 +4,21 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Microsoft.VisualBasic.FileIO;
+using ZipExtractor.Logging;
 using SearchOption = System.IO.SearchOption;
 
 namespace ZipExtractor;
 
 public static class FileSystemHelper
 {
-    private static void Log(string message) => Console.WriteLine(message);
+    private static void Log(string message) => ConsoleLog.Default.Detail("整理", message);
 
-    private static void Log(Exception ex, string message) => Log($"{message}：{ex.Message}");
+    private static void Log(Exception ex, string message) => ConsoleLog.Default.Warning($"{message}：{ex.Message}");
 
     /// <summary>
     /// 获取文件名的最后两个扩展名
     /// </summary>
-    /// <param name="name"></param>
+    /// <param name = "name"></param>
     /// <returns>没有'.'</returns>
     public static (string? Ext1, string? Ext2) GetLastTwoExtensions(string name)
     {
@@ -28,20 +29,18 @@ public static class FileSystemHelper
     /// <summary>
     /// 获取文件名和扩展名
     /// </summary>
-    /// <param name="name"></param>
+    /// <param name = "name"></param>
     /// <returns>没有'.'</returns>
     public static (string Name, string? Ext) GetExtension(string name)
     {
         var lastIndex = name.LastIndexOf('.');
-        return lastIndex < 0
-            ? (name, null)
-            : (name[..lastIndex], name[(lastIndex + 1)..]);
+        return lastIndex < 0 ? (name, null) : (name[..lastIndex], name[(lastIndex + 1)..]);
     }
 
     /// <summary>
-    /// 获取在指定<paramref name="path"/>不重名的文件或目录路径
+    /// 获取在指定<paramref name = "path"/>不重名的文件或目录路径
     /// </summary>
-    /// <param name="path"></param>
+    /// <param name = "path"></param>
     /// <returns></returns>
     public static string GetUniquePath(string path)
     {
@@ -54,6 +53,7 @@ public static class FileSystemHelper
             if (!Directory.Exists(path))
                 return path;
         }
+
         if (!Exists(path))
             return path;
         var dir = Path.GetDirectoryName(path)!;
@@ -73,25 +73,20 @@ public static class FileSystemHelper
         {
             candidate = Path.Combine(dir, $"{name} ({i}){ext}");
             i++;
-        } while (Exists(candidate));
+        }
+        while (Exists(candidate));
         return candidate;
     }
 
     public static long GetEntrySize(FileSystemInfo entry)
     {
-        return entry.Exists
-            ? entry is FileInfo fileInfo
-                ? fileInfo.Length
-                : entry is DirectoryInfo directoryInfo
-                    ? GetDirectorySize(directoryInfo)
-                    : 0
-            : 0;
+        return entry.Exists ? entry is FileInfo fileInfo ? fileInfo.Length : entry is DirectoryInfo directoryInfo ? GetDirectorySize(directoryInfo) : 0 : 0;
     }
 
     /// <summary>
     /// 获取目录总大小
     /// </summary>
-    /// <param name="dir"></param>
+    /// <param name = "dir"></param>
     /// <returns></returns>
     public static long GetDirectorySize(DirectoryInfo dir)
     {
@@ -101,7 +96,7 @@ public static class FileSystemHelper
     /// <summary>
     /// 获取文件集合大小
     /// </summary>
-    /// <param name="files"></param>
+    /// <param name = "files"></param>
     /// <returns></returns>
     public static long GetFilesSize(IEnumerable<FileInfo> files)
     {
@@ -119,33 +114,33 @@ public static class FileSystemHelper
         return sum;
     }
 
-    /// <inheritdoc cref="CleanEmptyDirectoriesInternal" />
+    /// <inheritdoc cref = "CleanEmptyDirectoriesInternal"/>
     public static int CleanEmptyDirectories(string root, bool includeRoot)
     {
         return CleanEmptyDirectories(new DirectoryInfo(root), includeRoot);
     }
 
-    /// <inheritdoc cref="CleanEmptyDirectoriesInternal" />
+    /// <inheritdoc cref = "CleanEmptyDirectoriesInternal"/>
     public static int CleanEmptyDirectories(DirectoryInfo root, bool includeRoot)
     {
         var count = CleanEmptyDirectoriesInternal(root, includeRoot);
         if (count is not 0)
             Log($"已删除 {root.FullName} 内空文件夹 {count} 个。");
-
         return count;
     }
 
     /// <summary>
-    /// 递归清理<paramref name="root"/>的空文件夹
+    /// 递归清理<paramref name = "root"/>的空文件夹
     /// </summary>
-    /// <param name="root"></param>
-    /// <param name="includeRoot"><paramref name="root"/>也为空时是否删除</param>
+    /// <param name = "root"></param>
+    /// <param name = "includeRoot"><paramref name = "root"/>也为空时是否删除</param>
     /// <returns>清理的空文件夹数量</returns>
     private static int CleanEmptyDirectoriesInternal(DirectoryInfo root, bool includeRoot)
     {
         if (!root.Exists)
             return 0;
-
+        if (IsGameFolder(root))
+            return 0;
         var count = 0;
         try
         {
@@ -174,17 +169,14 @@ public static class FileSystemHelper
         /// 只有父子名称相同时合并
         /// </summary>
         Equal,
-
         /// <summary>
         /// 总是合并
         /// </summary>
         Always,
-
         /// <summary>
         /// 子名称包含父名称时合并
         /// </summary>
         ContainsParent,
-
         /// <summary>
         /// 父名称包含子名称时合并
         /// </summary>
@@ -194,116 +186,92 @@ public static class FileSystemHelper
     /// <summary>
     /// 判断当前文件夹是否需要和它的唯一子项合并。
     /// </summary>
-    /// <param name="current">当前文件夹</param>
-    /// <param name="onlyChild">当前文件夹的唯一子项</param>
-    /// <param name="mergedNameWithoutExtension">合并后的目标基础名；当唯一子项为文件时会自动保留原扩展名</param>
+    /// <param name = "current">当前文件夹</param>
+    /// <param name = "onlyChild">当前文件夹的唯一子项</param>
+    /// <param name = "mergedNameWithoutExtension">合并后的目标基础名；当唯一子项为文件时会自动保留原扩展名</param>
     /// <returns>是否合并</returns>
     public delegate bool ShouldMergeNestedFolder(DirectoryInfo current, FileSystemInfo onlyChild, out string mergedNameWithoutExtension);
 
     /// <summary>
-    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且当前文件夹/唯一子项符合 <paramref name="shouldMerge"/>”的相邻两层合并。空文件夹直接删除
+    /// 在目录内最多 <paramref name = "maxDepth"/> 次，将“父仅有唯一子项，且当前文件夹/唯一子项符合 <paramref name = "shouldMerge"/>”的相邻两层合并。空文件夹直接删除
     /// </summary>
-    /// <param name="root">根目录不会被合并/删除</param>
-    /// <param name="shouldMerge">判断当前文件夹是否需要和它的唯一子项合并，参数为当前文件夹和它的唯一子项</param>
-    /// <param name="maxDepth">
-    /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
+    /// <param name = "root">根目录不会被合并/删除</param>
+    /// <param name = "shouldMerge">判断当前文件夹是否需要和它的唯一子项合并，参数为当前文件夹和它的唯一子项</param>
+    /// <param name = "maxDepth">
+    /// 最小有效值是1，表示仅处理<paramref name = "root"/>与其唯一子项的合并。
     /// 每增加1，表示允许递归继续向下处理一层子目录。
     /// </param>
-    /// <param name="useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeMatchedNestedFolders(
-        DirectoryInfo root,
-        ShouldMergeNestedFolder shouldMerge,
-        int maxDepth = 3,
-        bool useUniqueName = false)
+    /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
+    public static void NormalizeMatchedNestedFolders(DirectoryInfo root, ShouldMergeNestedFolder shouldMerge, int maxDepth = 3, bool useUniqueName = false)
     {
         ArgumentNullException.ThrowIfNull(shouldMerge);
-
-        CleanEmptyDirectories(root, false);
+        if (IsGameFolder(root))
+            return;
+        _ = CleanEmptyDirectories(root, false);
         foreach (var directoryInfo in root.GetDirectories())
             NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth, shouldMerge, useUniqueName, out _);
     }
 
     /// <summary>
-    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“名称包含 <paramref name="namePart"/>，且符合合并标准”的文件夹与相邻层合并。合并后使用另一侧名称
+    /// 在目录内最多 <paramref name = "maxDepth"/> 次，将“名称包含 <paramref name = "namePart"/>，且符合合并标准”的文件夹与相邻层合并。合并后使用另一侧名称
     /// </summary>
-    /// <param name="root">根目录不会被合并/删除</param>
-    /// <param name="namePart">当前文件夹名称需要包含的字符串，如“新建文件夹”</param>
-    /// <param name="maxDepth">
-    /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
+    /// <param name = "root">根目录不会被合并/删除</param>
+    /// <param name = "namePart">当前文件夹名称需要包含的字符串，如“新建文件夹”</param>
+    /// <param name = "maxDepth">
+    /// 最小有效值是1，表示仅处理<paramref name = "root"/>与其唯一子项的合并。
     /// 每增加1，表示允许递归继续向下处理一层子目录。
     /// </param>
-    /// <param name="useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeNestedFoldersContainingName(
-        DirectoryInfo root,
-        string namePart,
-        int maxDepth = 3,
-        bool useUniqueName = false)
+    /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
+    public static void NormalizeNestedFoldersContainingName(DirectoryInfo root, string namePart, int maxDepth = 3, bool useUniqueName = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(namePart);
-
-        NormalizeMatchedNestedFolders(
-            root,
-            (current, onlyChild, out mergedNameWithoutExtension) =>
+        NormalizeMatchedNestedFolders(root, (current, onlyChild, out mergedNameWithoutExtension) =>
+        {
+            var (childName, _) = GetMergedChildName(onlyChild);
+            var currentMatches = current.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
+            if (currentMatches)
             {
-                var (childName, _) = GetMergedChildName(onlyChild);
-                var currentMatches = current.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
+                mergedNameWithoutExtension = childName;
+                return true;
+            }
 
-                if (currentMatches)
-                {
-                    mergedNameWithoutExtension = childName;
-                    return true;
-                }
-
-                mergedNameWithoutExtension = current.Name;
-                var childMatches = onlyChild is DirectoryInfo childDirectory
-                                   && childDirectory.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
-
-                return childMatches;
-            },
-            maxDepth,
-            useUniqueName);
+            mergedNameWithoutExtension = current.Name;
+            var childMatches = onlyChild is DirectoryInfo childDirectory && childDirectory.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
+            return childMatches;
+        }, maxDepth, useUniqueName);
     }
 
     /// <summary>
-    /// 在目录内最多 <paramref name="maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。空文件夹直接删除
+    /// 在目录内最多 <paramref name = "maxDepth"/> 次，将“父仅有唯一子项，且两者名称重复”的相邻两层合并。空文件夹直接删除
     /// </summary>
-    /// <param name="root">根目录不会被合并/删除</param>
-    /// <param name="maxDepth">
-    /// 最小有效值是1，表示仅处理<paramref name="root"/>与其唯一子项的合并。
+    /// <param name = "root">根目录不会被合并/删除</param>
+    /// <param name = "maxDepth">
+    /// 最小有效值是1，表示仅处理<paramref name = "root"/>与其唯一子项的合并。
     /// 每增加1，表示允许递归继续向下处理一层子目录。
     /// </param>
-    /// <param name="strict"></param>
-    /// <param name="useParentName">合并后原子项是否采用父文件夹的名字</param>
-    /// <param name="useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeRedundantNestedFolders(
-        DirectoryInfo root,
-        int maxDepth = 3,
-        RedundantThreshold strict = RedundantThreshold.ContainsParent,
-        bool useParentName = false,
-        bool useUniqueName = false)
+    /// <param name = "strict"></param>
+    /// <param name = "useParentName">合并后原子项是否采用父文件夹的名字</param>
+    /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
+    public static void NormalizeRedundantNestedFolders(DirectoryInfo root, int maxDepth = 3, RedundantThreshold strict = RedundantThreshold.ContainsParent, bool useParentName = false, bool useUniqueName = false)
     {
-        NormalizeMatchedNestedFolders(
-            root,
-            (current, onlyChild, out mergedNameWithoutExtension) =>
+        NormalizeMatchedNestedFolders(root, (current, onlyChild, out mergedNameWithoutExtension) =>
+        {
+            var (childName, _) = GetMergedChildName(onlyChild);
+            mergedNameWithoutExtension = useParentName ? current.Name : childName;
+            return strict switch
             {
-                var (childName, _) = GetMergedChildName(onlyChild);
-                mergedNameWithoutExtension = useParentName ? current.Name : childName;
-                return strict switch
-                {
-                    RedundantThreshold.Equal => childName.EqualsFileName(current.Name),
-                    RedundantThreshold.Always => true,
-                    RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
-                    RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
-                    _ => false
-                };
-            },
-            maxDepth,
-            useUniqueName);
+                RedundantThreshold.Equal => childName.EqualsFileName(current.Name),
+                RedundantThreshold.Always => true,
+                RedundantThreshold.ContainsParent => childName.ContainsFileName(current.Name),
+                RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
+                _ => false
+            };
+        }, maxDepth, useUniqueName);
     }
 
-    /// <inheritdoc cref="NormalizeMatchedNestedFolders(DirectoryInfo, ShouldMergeNestedFolder, int, bool)" />
-    /// <param name="current">当前目录</param>
-    /// <param name="newCurrent">若当前目录被合并，则返回新的代替项；若被删除则返回<see langword="null"/></param>
+    /// <inheritdoc cref = "NormalizeMatchedNestedFolders(DirectoryInfo, ShouldMergeNestedFolder, int, bool)"/>
+    /// <param name = "current">当前目录</param>
+    /// <param name = "newCurrent">若当前目录被合并，则返回新的代替项；若被删除则返回<see langword="null"/></param>
     [SuppressMessage("ReSharper", "InvalidXmlDocComment")]
     private static void NormalizeMatchedNestedFoldersCore(DirectoryInfo current, int maxDepth, ShouldMergeNestedFolder shouldMerge, bool useUniqueName, out FileSystemInfo? newCurrent)
     {
@@ -313,22 +281,23 @@ public static class FileSystemHelper
         try
         {
             var entries = current.GetFileSystemInfos("*", SearchOption.TopDirectoryOnly);
+            // Protect the folder itself as well as its entire subtree, even with only one file.
+            if (IsGameFolder(entries))
+            {
+                ConsoleLog.Default.GameSkipped(current.FullName);
+                return;
+            }
 
             switch (entries)
             {
                 // current -> a, b, c, ...
                 case { Length: > 1 }:
                 {
-                    if (IsGameFolder(entries))
-                    {
-                        Log($"跳过游戏文件夹：({current.FullName})");
-                        break;
-                    }
-
                     foreach (var directory in entries.OfType<DirectoryInfo>())
                         NormalizeMatchedNestedFoldersCore(directory, maxDepth - 1, shouldMerge, useUniqueName, out _);
                     break;
                 }
+
                 // current -> 空
                 case []:
                 {
@@ -336,11 +305,19 @@ public static class FileSystemHelper
                     newCurrent = null;
                     break;
                 }
+
                 // current -> onlyChild
                 case [var onlyChild]:
                 {
                     if (onlyChild is DirectoryInfo directoryInfo)
+                    {
+                        // Do not flatten a protected game folder into its parent wrapper either.
+                        if (IsGameFolder(directoryInfo))
+                            return;
                         NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth - 1, shouldMerge, useUniqueName, out onlyChild);
+                        if (onlyChild is DirectoryInfo resultDirectory && IsGameFolder(resultDirectory))
+                            return;
+                    }
 
                     if (onlyChild is null)
                     {
@@ -361,18 +338,14 @@ public static class FileSystemHelper
                         // Directory -> Name
                         var (_, ext) = GetMergedChildName(onlyChild);
                         var merge = shouldMerge(current, onlyChild, out var mergedNameWithoutExtension);
-
                         if (merge)
                         {
                             var originalPath = onlyChild.FullName;
-
                             var suggestedDestPath = parent.Combine(mergedNameWithoutExtension).GetComparablePath();
                             suggestedDestPath += ext is null ? null : "." + ext;
-
                             if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName))
                             {
                                 Log($"合并重复文件夹：({originalPath}, {current.FullName}) -> {onlyChild.FullName}");
-
                                 // 若成功移动，则此时onlyChild已和current在同一目录下
                                 // 移出OnlyChild后，root变为空目录，删除它
                                 // 判断名称是否相等，以防删除onlyChild
@@ -393,25 +366,24 @@ public static class FileSystemHelper
         }
     }
 
-    private static bool IsGameFolder(IEnumerable<FileSystemInfo> entries)
+    /// <summary>Direct EXE/DLL/BIN children identify a game folder; protect its entire subtree.</summary>
+    public static bool IsGameFolder(DirectoryInfo directory) => directory.Exists && IsGameFolder(directory.EnumerateFileSystemInfos());
+
+    public static bool IsGameFolder(IEnumerable<FileSystemInfo> entries)
     {
-        return entries
-            .OfType<FileInfo>()
-            .Any(t => t.Extension is ".dll" or ".exe" or ".bin");
+        return entries.OfType<FileInfo>().Any(t => t.Extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) || t.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) || t.Extension.Equals(".bin", StringComparison.OrdinalIgnoreCase));
     }
 
     private static (string Name, string? Extension) GetMergedChildName(FileSystemInfo entry)
     {
-        return entry is FileInfo file
-            ? GetExtension(file.Name)
-            : (entry.Name, null);
+        return entry is FileInfo file ? GetExtension(file.Name) : (entry.Name, null);
     }
 
-    /// <param name="info"></param>
+    /// <param name = "info"></param>
     extension(FileInfo info)
     {
         /// <summary>
-        /// 删除<paramref name="info"/>，如果不存在则不操作
+        /// 删除<paramref name = "info"/>，如果不存在则不操作
         /// </summary>
         /// <returns>是否成功删除</returns>
         public bool RemoveIfExists(bool moveToRecycleBin = false)
@@ -421,10 +393,7 @@ public static class FileSystemHelper
                 if (info.Exists)
                 {
                     if (moveToRecycleBin)
-                        FileSystem.DeleteFile(
-                            info.FullName,
-                            UIOption.OnlyErrorDialogs,
-                            RecycleOption.SendToRecycleBin);
+                        FileSystem.DeleteFile(info.FullName, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
                     else
                         info.Delete();
                     return true;
@@ -439,15 +408,13 @@ public static class FileSystemHelper
         }
     }
 
-    /// <param name="info"></param>
+    /// <param name = "info"></param>
     extension(DirectoryInfo info)
     {
         public string Combine(FileInfo file) => Path.Combine(info.FullName, file.Name);
-
         public string Combine(string fileName) => Path.Combine(info.FullName, fileName);
-
         /// <summary>
-        /// 删除<paramref name="info"/>，如果不存在则不操作
+        /// 删除<paramref name = "info"/>，如果不存在则不操作
         /// </summary>
         /// <returns>是否成功删除</returns>
         public bool RemoveIfExists(bool recursive, bool moveToRecycleBin = false)
@@ -457,10 +424,7 @@ public static class FileSystemHelper
                 if (info.Exists)
                 {
                     if (moveToRecycleBin)
-                        FileSystem.DeleteDirectory(
-                            info.FullName,
-                            UIOption.OnlyErrorDialogs,
-                            RecycleOption.SendToRecycleBin);
+                        FileSystem.DeleteDirectory(info.FullName, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
                     else
                         info.Delete(recursive);
                     return true;
@@ -475,21 +439,19 @@ public static class FileSystemHelper
         }
     }
 
-    /// <param name="info"></param>
+    /// <param name = "info"></param>
     extension(FileSystemInfo info)
     {
         public string NameWithoutExtension => Path.GetFileNameWithoutExtension(info.Name);
+        /// <inheritdoc cref = "DirectoryInfo.Parent"/>
+        public DirectoryInfo Parent => info switch
+        {
+            DirectoryInfo dirInfo => dirInfo.Parent,
+            FileInfo fileInfo => fileInfo.Directory,
+            _ => null
+        } ?? throw new InvalidOperationException("FileSystemInfo has no parent");
 
-        /// <inheritdoc cref="DirectoryInfo.Parent" />
-        public DirectoryInfo Parent =>
-            info switch
-            {
-                DirectoryInfo dirInfo => dirInfo.Parent,
-                FileInfo fileInfo => fileInfo.Directory,
-                _ => null
-            } ?? throw new InvalidOperationException("FileSystemInfo has no parent");
-
-        /// <inheritdoc cref="DirectoryInfo.MoveTo" />
+        /// <inheritdoc cref = "DirectoryInfo.MoveTo"/>
         public void MoveTo(string destPath)
         {
             switch (info)
@@ -505,13 +467,12 @@ public static class FileSystemHelper
             }
         }
 
-        /// <inheritdoc cref="Directory.Exists" />
+        /// <inheritdoc cref = "Directory.Exists"/>
         public static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
-
         /// <summary>
-        /// 将移动<paramref name="info"/>为<paramref name="destPath"/>
+        /// 将移动<paramref name = "info"/>为<paramref name = "destPath"/>
         /// </summary>
-        /// <param name="destPath">目标位置</param>
+        /// <param name = "destPath">目标位置</param>
         public bool TryMoveTo(string destPath)
         {
             try
@@ -529,28 +490,25 @@ public static class FileSystemHelper
         }
 
         /// <summary>
-        /// 将<paramref name="info"/>移动到<paramref name="suggestedDestPath"/>，若存在则空目录则合并
+        /// 将<paramref name = "info"/>移动到<paramref name = "suggestedDestPath"/>，若存在则空目录则合并
         /// </summary>
         /// <remarks>
-        /// <paramref name="info"/>可以是<paramref name="suggestedDestPath"/>的子项目（a/b/c.txt -> a = a/c.txt）
+        /// <paramref name = "info"/>可以是<paramref name = "suggestedDestPath"/>的子项目（a/b/c.txt -> a = a/c.txt）
         /// </remarks>
-        /// <param name="suggestedDestPath">目标位置</param>
-        /// <param name="renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name="suggestedDestPath"/></param>
+        /// <param name = "suggestedDestPath">目标位置</param>
+        /// <param name = "renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name = "suggestedDestPath"/></param>
         private bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated)
         {
             // 异常目录
             if (info.Parent is not { Exists: true })
                 return false;
-
             // 本身已在目标位置
             if (suggestedDestPath.EqualsFileName(info.FullName))
                 return true;
-
             try
             {
                 if (File.Exists(suggestedDestPath))
                     throw new InvalidOperationException("目标位置有同名文件");
-
                 if (Directory.Exists(suggestedDestPath))
                 {
                     var entries = Directory.GetFileSystemEntries(suggestedDestPath);
@@ -566,7 +524,6 @@ public static class FileSystemHelper
                 }
 
                 info.MoveTo(suggestedDestPath);
-
                 return true;
             }
             catch (Exception e)
@@ -578,7 +535,6 @@ public static class FileSystemHelper
                 }
 
                 Log($"移动目录内容失败（{info.FullName} -> {suggestedDestPath}）：{e.Message}");
-
                 return false;
             }
         }
@@ -595,15 +551,12 @@ public static class FileSystemHelper
 
     extension(string str)
     {
-        /// <inheritdoc cref="string.Equals(string, StringComparison)" />
+        /// <inheritdoc cref = "string.Equals(string, StringComparison)"/>
         public bool EqualsFileName(string value) => str.GetComparablePath().Equals(value.GetComparablePath(), StringComparison.OrdinalIgnoreCase);
-
-        /// <inheritdoc cref="string.Contains(string, StringComparison)" />
+        /// <inheritdoc cref = "string.Contains(string, StringComparison)"/>
         public bool ContainsFileName(string value) => str.GetComparablePath().Contains(value.GetComparablePath(), StringComparison.OrdinalIgnoreCase);
-
-        /// <inheritdoc cref="string.StartsWith(string, StringComparison)" />
+        /// <inheritdoc cref = "string.StartsWith(string, StringComparison)"/>
         public bool StartWithFileName(string value) => str.GetComparablePath().StartsWith(value.GetComparablePath(), StringComparison.OrdinalIgnoreCase);
-
         private string GetComparablePath() => Path.GetFullPath(str).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 }
