@@ -489,6 +489,25 @@ foreach (var marker in new[]
         Assert(!Directory.Exists(Path.Combine(outputGame, "inside")), "Game archive extracted");
         Assert(File.Exists(Path.Combine(options.CompleteDirectory, "outer/Ordinary/renamed/内容.bin")), "Ordinary sibling not extracted");
     });
+Test("Game protection: duplicate-name outer wrapper is removed, game contents preserved", () =>
+{
+    var dir = Case("game-duplicate-wrapper");
+    var game = Path.Combine(dir, "Game/Game");
+    _ = Directory.CreateDirectory(Path.Combine(game, "Data/Data/empty"));
+    File.WriteAllText(Path.Combine(game, "Game.EXE"), "game");
+    File.WriteAllText(Path.Combine(game, "UnityPlayer.dll"), "engine");
+    using (ZipFile.Open(Path.Combine(game, "Data/inside.zip"), ZipArchiveMode.Create))
+    {
+    }
+
+    FileSystemHelper.NormalizeRedundantNestedFolders(new(dir), 20);
+    var target = Path.Combine(dir, "Game");
+    Assert(File.ReadAllText(Path.Combine(target, "Game.EXE")) is "game", "Game root was not moved intact");
+    Assert(File.ReadAllText(Path.Combine(target, "UnityPlayer.dll")) is "engine", "Game DLL lost");
+    Assert(Directory.Exists(Path.Combine(target, "Data/Data/empty")), "Internal game folders normalized or removed");
+    Assert(File.Exists(Path.Combine(target, "Data/inside.zip")), "Game archive altered");
+    Assert(!Directory.Exists(Path.Combine(target, "Game")), "Duplicate wrapper retained");
+});
 Test("Game protection: one-file game folder cannot be flattened by any merge rule", () =>
 {
     var dir = Case("game-merge");
@@ -550,6 +569,78 @@ foreach (var format in new[]
             var archive = ArchiveDiscovery.Scan(dir).Single();
             LoggingChecks.Verify(format is "rar" ? rar : zip, archive, Password(format), dir, interactive);
         });
+// Filesystem timestamps can lag the high-resolution managed clock by a clock tick.
+foreach (var update in new[] { false, true })
+{
+    Test($"Directory dates: game wrapper merge, update={update}", () =>
+    {
+        var dir = Case("dates-merge-" + update);
+        var game = Path.Combine(dir, "Game/Game");
+        _ = Directory.CreateDirectory(Path.Combine(game, "Data/empty"));
+        var file = Path.Combine(game, "Game.exe");
+        File.WriteAllText(file, "game");
+        var old = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(file, old.AddYears(-1));
+        Directory.SetLastWriteTimeUtc(Path.Combine(game, "Data"), old.AddYears(1));
+        Directory.SetLastWriteTimeUtc(game, old.AddYears(2));
+        Directory.SetLastWriteTimeUtc(dir, old);
+        var before = DateTime.UtcNow;
+        FileSystemHelper.NormalizeRedundantNestedFolders(new(dir), 20, updateDirectoryLastWriteTime: update);
+        var target = Path.Combine(dir, "Game");
+        Assert(update || Directory.GetLastWriteTimeUtc(target) == old.AddYears(2), "Moved game date was not preserved");
+        Assert(!update || Directory.GetLastWriteTimeUtc(target) >= before, "Moved game date was not updated");
+        Assert(update ? Directory.GetLastWriteTimeUtc(dir) >= before.AddSeconds(-1) : Directory.GetLastWriteTimeUtc(dir) == old, "Merge parent date incorrect");
+        Assert(Directory.GetLastWriteTimeUtc(Path.Combine(target, "Data")) == old.AddYears(1), "Internal game directory date changed");
+        Assert(File.GetLastWriteTimeUtc(Path.Combine(target, "Game.exe")) == old.AddYears(-1), "File date changed");
+    });
+    Test($"Directory dates: recursive empty cleanup, update={update}", () =>
+    {
+        var dir = Case("dates-clean-" + update);
+        _ = Directory.CreateDirectory(Path.Combine(dir, "empty/empty"));
+        File.WriteAllText(Path.Combine(dir, "keep.txt"), "keep");
+        var old = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(dir, old);
+        var before = DateTime.UtcNow;
+        Assert(FileSystemHelper.CleanEmptyDirectories(dir, false, update) is 2, "Empty cleanup failed");
+        Assert(update ? Directory.GetLastWriteTimeUtc(dir) >= before.AddSeconds(-1) : Directory.GetLastWriteTimeUtc(dir) == old, "Cleanup parent date incorrect");
+    });
+    Test($"Directory dates: cross-parent move and file removal, update={update}", () =>
+    {
+        var dir = Case("dates-move-" + update);
+        var source = Path.Combine(dir, "source");
+        var destination = Path.Combine(dir, "destination");
+        var moved = Path.Combine(source, "folder");
+        _ = Directory.CreateDirectory(moved);
+        _ = Directory.CreateDirectory(destination);
+        File.WriteAllText(Path.Combine(moved, "payload.txt"), "payload");
+        var old = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(moved, old);
+        Directory.SetLastWriteTimeUtc(source, old);
+        Directory.SetLastWriteTimeUtc(destination, old);
+        var before = DateTime.UtcNow;
+        var target = Path.Combine(destination, "folder");
+        Assert(new DirectoryInfo(moved).TryMoveTo(target, update), "Move failed");
+        foreach (var path in new[] { source, destination, target })
+            Assert(update ? Directory.GetLastWriteTimeUtc(path) >= before.AddSeconds(-1) : Directory.GetLastWriteTimeUtc(path) == old, "Move directory date incorrect");
+        Directory.SetLastWriteTimeUtc(target, old);
+        Assert(new FileInfo(Path.Combine(target, "payload.txt")).RemoveIfExists(updateDirectoryLastWriteTime: update), "Removal failed");
+        Assert(update ? Directory.GetLastWriteTimeUtc(target) >= before.AddSeconds(-1) : Directory.GetLastWriteTimeUtc(target) == old, "File removal parent date incorrect");
+    });
+    Test($"Directory dates: unique-path cleanup and no-op move, update={update}", () =>
+    {
+        var dir = Case("dates-unique-" + update);
+        var empty = Path.Combine(dir, "empty");
+        _ = Directory.CreateDirectory(empty);
+        var old = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(dir, old);
+        var before = DateTime.UtcNow;
+        Assert(FileSystemHelper.GetUniquePath(empty, update) == empty && !Directory.Exists(empty), "Unique-path empty cleanup failed");
+        Assert(update ? Directory.GetLastWriteTimeUtc(dir) >= before.AddSeconds(-1) : Directory.GetLastWriteTimeUtc(dir) == old, "Unique-path parent date incorrect");
+        Directory.SetLastWriteTimeUtc(dir, old);
+        Assert(new DirectoryInfo(dir).TryMoveTo(dir, update), "No-op move failed");
+        Assert(Directory.GetLastWriteTimeUtc(dir) == old, "No-op move changed date");
+    });
+}
 Console.WriteLine($"{tests - failures}/{tests} passed. Fixtures: {root}");
 Environment.ExitCode = failures is 0 ? 0 : 1;
 static uint Crc(ReadOnlySpan<byte> data)

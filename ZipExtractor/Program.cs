@@ -46,6 +46,7 @@ if (args.Contains("--help"))
           --max-depth <层数>     嵌套解压上限，默认 20
           --non-interactive      不等待按键
           --no-normalize         不整理输出目录层级
+          --update-directory-times  整理操作更新目录修改日期
           --7zip-dll <路径>      指定 7z.dll
           --unrar-dll <路径>      指定 UnRAR.dll
 
@@ -76,24 +77,25 @@ try
     _ = Directory.CreateDirectory(input);
     using var sevenZip = new SevenZipNativeExtractor(sevenZipDll);
     using var unrar = new UnRarNativeExtractor(unrarDll);
-    var options = new PipelineOptions(input, complete, args.Contains("--keep-sources"), int.Parse(Option("--max-depth") ?? "20"));
+    var updateDirectoryLastWriteTime = true;
+    var options = new PipelineOptions(input, complete, args.Contains("--keep-sources"), int.Parse(Option("--max-depth") ?? "20"), updateDirectoryLastWriteTime);
     ConsoleLog.Default.Header(options);
     var failures = new ExtractionPipeline([
         sevenZip,
         unrar
     ]).Run(options, passwords, cancellationToken: cancellation.Token);
     ConsoleLog.Default.Info("整理输出目录…");
-    _ = FileSystemHelper.CleanEmptyDirectories(input, false);
+    _ = FileSystemHelper.CleanEmptyDirectories(input, false, options.UpdateDirectoryLastWriteTime);
     var completeDir = new DirectoryInfo(complete);
     if (!args.Contains("--no-normalize"))
     {
-        FileSystemHelper.NormalizeNestedFoldersContainingName(completeDir, "新建文件夹", 20);
-        FileSystemHelper.NormalizeRedundantNestedFolders(completeDir, 20);
+        FileSystemHelper.NormalizeNestedFoldersContainingName(completeDir, "新建文件夹", 20, updateDirectoryLastWriteTime: options.UpdateDirectoryLastWriteTime);
+        FileSystemHelper.NormalizeRedundantNestedFolders(completeDir, 20, updateDirectoryLastWriteTime: options.UpdateDirectoryLastWriteTime);
         if (!args.Contains("--non-interactive") && !Console.IsInputRedirected)
         {
             ConsoleLog.Default.Info("按任意键继续合并唯一子目录…");
             _ = Console.ReadKey(true);
-            FileSystemHelper.NormalizeRedundantNestedFolders(completeDir, 20, FileSystemHelper.RedundantThreshold.Always);
+            FileSystemHelper.NormalizeRedundantNestedFolders(completeDir, 20, FileSystemHelper.RedundantThreshold.Always, updateDirectoryLastWriteTime: options.UpdateDirectoryLastWriteTime);
         }
     }
 

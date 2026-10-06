@@ -41,15 +41,16 @@ public static class FileSystemHelper
     /// 获取在指定<paramref name = "path"/>不重名的文件或目录路径
     /// </summary>
     /// <param name = "path"></param>
+    /// <param name = "updateDirectoryLastWriteTime"></param>
     /// <returns></returns>
-    public static string GetUniquePath(string path)
+    public static string GetUniquePath(string path, bool updateDirectoryLastWriteTime = false)
     {
         if (!File.Exists(path))
         {
             if (!Directory.Exists(path))
                 return path;
             // 尝试清理空目录
-            _ = CleanEmptyDirectories(path, true);
+            _ = CleanEmptyDirectories(path, true, updateDirectoryLastWriteTime);
             if (!Directory.Exists(path))
                 return path;
         }
@@ -76,6 +77,20 @@ public static class FileSystemHelper
         }
         while (Exists(candidate));
         return candidate;
+    }
+
+    /// <summary>Deletes a directory, optionally allowing its parent's modification date to change.</summary>
+    public static void DeleteDirectory(string path, bool recursive = false, bool updateDirectoryLastWriteTime = false)
+    {
+        using var dates = new DirectoryTimestampScope(updateDirectoryLastWriteTime, path, Path.GetDirectoryName(Path.GetFullPath(path)));
+        Directory.Delete(path, recursive);
+    }
+
+    /// <summary>Deletes a file, optionally allowing its directory's modification date to change.</summary>
+    public static void DeleteFile(string path, bool updateDirectoryLastWriteTime = false)
+    {
+        using var dates = new DirectoryTimestampScope(updateDirectoryLastWriteTime, Path.GetDirectoryName(Path.GetFullPath(path)));
+        File.Delete(path);
     }
 
     public static long GetEntrySize(FileSystemInfo entry)
@@ -115,15 +130,15 @@ public static class FileSystemHelper
     }
 
     /// <inheritdoc cref = "CleanEmptyDirectoriesInternal"/>
-    public static int CleanEmptyDirectories(string root, bool includeRoot)
+    public static int CleanEmptyDirectories(string root, bool includeRoot, bool updateDirectoryLastWriteTime = false)
     {
-        return CleanEmptyDirectories(new DirectoryInfo(root), includeRoot);
+        return CleanEmptyDirectories(new DirectoryInfo(root), includeRoot, updateDirectoryLastWriteTime);
     }
 
     /// <inheritdoc cref = "CleanEmptyDirectoriesInternal"/>
-    public static int CleanEmptyDirectories(DirectoryInfo root, bool includeRoot)
+    public static int CleanEmptyDirectories(DirectoryInfo root, bool includeRoot, bool updateDirectoryLastWriteTime = false)
     {
-        var count = CleanEmptyDirectoriesInternal(root, includeRoot);
+        var count = CleanEmptyDirectoriesInternal(root, includeRoot, updateDirectoryLastWriteTime);
         if (count is not 0)
             Log($"已删除 {root.FullName} 内空文件夹 {count} 个。");
         return count;
@@ -135,7 +150,7 @@ public static class FileSystemHelper
     /// <param name = "root"></param>
     /// <param name = "includeRoot"><paramref name = "root"/>也为空时是否删除</param>
     /// <returns>清理的空文件夹数量</returns>
-    private static int CleanEmptyDirectoriesInternal(DirectoryInfo root, bool includeRoot)
+    private static int CleanEmptyDirectoriesInternal(DirectoryInfo root, bool includeRoot, bool updateDirectoryLastWriteTime)
     {
         if (!root.Exists)
             return 0;
@@ -144,11 +159,11 @@ public static class FileSystemHelper
         var count = 0;
         try
         {
-            count += root.GetDirectories().Sum(dir => CleanEmptyDirectoriesInternal(dir, true));
+            count += root.GetDirectories().Sum(dir => CleanEmptyDirectoriesInternal(dir, true, updateDirectoryLastWriteTime));
             if (includeRoot)
                 if (root.GetFileSystemInfos().Length is 0)
                 {
-                    root.Delete();
+                    DeleteDirectory(root.FullName, updateDirectoryLastWriteTime: updateDirectoryLastWriteTime);
                     count++;
                 }
         }
@@ -202,14 +217,14 @@ public static class FileSystemHelper
     /// 每增加1，表示允许递归继续向下处理一层子目录。
     /// </param>
     /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeMatchedNestedFolders(DirectoryInfo root, ShouldMergeNestedFolder shouldMerge, int maxDepth = 3, bool useUniqueName = false)
+    public static void NormalizeMatchedNestedFolders(DirectoryInfo root, ShouldMergeNestedFolder shouldMerge, int maxDepth = 3, bool useUniqueName = false, bool updateDirectoryLastWriteTime = false)
     {
         ArgumentNullException.ThrowIfNull(shouldMerge);
         if (IsGameFolder(root))
             return;
-        _ = CleanEmptyDirectories(root, false);
+        _ = CleanEmptyDirectories(root, false, updateDirectoryLastWriteTime);
         foreach (var directoryInfo in root.GetDirectories())
-            NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth, shouldMerge, useUniqueName, out _);
+            NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth, shouldMerge, useUniqueName, updateDirectoryLastWriteTime, out _);
     }
 
     /// <summary>
@@ -222,7 +237,7 @@ public static class FileSystemHelper
     /// 每增加1，表示允许递归继续向下处理一层子目录。
     /// </param>
     /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeNestedFoldersContainingName(DirectoryInfo root, string namePart, int maxDepth = 3, bool useUniqueName = false)
+    public static void NormalizeNestedFoldersContainingName(DirectoryInfo root, string namePart, int maxDepth = 3, bool useUniqueName = false, bool updateDirectoryLastWriteTime = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(namePart);
         NormalizeMatchedNestedFolders(root, (current, onlyChild, out mergedNameWithoutExtension) =>
@@ -238,7 +253,7 @@ public static class FileSystemHelper
             mergedNameWithoutExtension = current.Name;
             var childMatches = onlyChild is DirectoryInfo childDirectory && childDirectory.Name.Contains(namePart, StringComparison.OrdinalIgnoreCase);
             return childMatches;
-        }, maxDepth, useUniqueName);
+        }, maxDepth, useUniqueName, updateDirectoryLastWriteTime);
     }
 
     /// <summary>
@@ -252,7 +267,7 @@ public static class FileSystemHelper
     /// <param name = "strict"></param>
     /// <param name = "useParentName">合并后原子项是否采用父文件夹的名字</param>
     /// <param name = "useUniqueName">若子项移动后重名，是否重命名，否则放弃移动</param>
-    public static void NormalizeRedundantNestedFolders(DirectoryInfo root, int maxDepth = 3, RedundantThreshold strict = RedundantThreshold.ContainsParent, bool useParentName = false, bool useUniqueName = false)
+    public static void NormalizeRedundantNestedFolders(DirectoryInfo root, int maxDepth = 3, RedundantThreshold strict = RedundantThreshold.ContainsParent, bool useParentName = false, bool useUniqueName = false, bool updateDirectoryLastWriteTime = false)
     {
         NormalizeMatchedNestedFolders(root, (current, onlyChild, out mergedNameWithoutExtension) =>
         {
@@ -266,14 +281,14 @@ public static class FileSystemHelper
                 RedundantThreshold.ContainsChild => current.Name.ContainsFileName(childName),
                 _ => false
             };
-        }, maxDepth, useUniqueName);
+        }, maxDepth, useUniqueName, updateDirectoryLastWriteTime);
     }
 
-    /// <inheritdoc cref = "NormalizeMatchedNestedFolders(DirectoryInfo, ShouldMergeNestedFolder, int, bool)"/>
+    /// <inheritdoc cref = "NormalizeMatchedNestedFolders(DirectoryInfo, ShouldMergeNestedFolder, int, bool, bool)"/>
     /// <param name = "current">当前目录</param>
     /// <param name = "newCurrent">若当前目录被合并，则返回新的代替项；若被删除则返回<see langword="null"/></param>
     [SuppressMessage("ReSharper", "InvalidXmlDocComment")]
-    private static void NormalizeMatchedNestedFoldersCore(DirectoryInfo current, int maxDepth, ShouldMergeNestedFolder shouldMerge, bool useUniqueName, out FileSystemInfo? newCurrent)
+    private static void NormalizeMatchedNestedFoldersCore(DirectoryInfo current, int maxDepth, ShouldMergeNestedFolder shouldMerge, bool useUniqueName, bool updateDirectoryLastWriteTime, out FileSystemInfo? newCurrent)
     {
         newCurrent = current;
         if (maxDepth <= 0 || !current.Exists)
@@ -294,14 +309,14 @@ public static class FileSystemHelper
                 case { Length: > 1 }:
                 {
                     foreach (var directory in entries.OfType<DirectoryInfo>())
-                        NormalizeMatchedNestedFoldersCore(directory, maxDepth - 1, shouldMerge, useUniqueName, out _);
+                        NormalizeMatchedNestedFoldersCore(directory, maxDepth - 1, shouldMerge, useUniqueName, updateDirectoryLastWriteTime, out _);
                     break;
                 }
 
                 // current -> 空
                 case []:
                 {
-                    current.Delete();
+                    DeleteDirectory(current.FullName, updateDirectoryLastWriteTime: updateDirectoryLastWriteTime);
                     newCurrent = null;
                     break;
                 }
@@ -311,11 +326,10 @@ public static class FileSystemHelper
                 {
                     if (onlyChild is DirectoryInfo directoryInfo)
                     {
-                        // Do not flatten a protected game folder into its parent wrapper either.
-                        if (IsGameFolder(directoryInfo))
-                            return;
-                        NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth - 1, shouldMerge, useUniqueName, out onlyChild);
-                        if (onlyChild is DirectoryInfo resultDirectory && IsGameFolder(resultDirectory))
+                        NormalizeMatchedNestedFoldersCore(directoryInfo, maxDepth - 1, shouldMerge, useUniqueName, updateDirectoryLastWriteTime, out onlyChild);
+                        // A duplicate-name wrapper can be removed by moving the game folder as a whole.
+                        // Keep its contents and internal layout protected from normalization.
+                        if (onlyChild is DirectoryInfo resultDirectory && IsGameFolder(resultDirectory) && !current.Name.EqualsFileName(resultDirectory.Name))
                             return;
                     }
 
@@ -323,7 +337,7 @@ public static class FileSystemHelper
                     {
                         if (current.Exists && current.GetFileSystemInfos("*", SearchOption.TopDirectoryOnly).Length is 0)
                         {
-                            current.Delete();
+                            DeleteDirectory(current.FullName, updateDirectoryLastWriteTime: updateDirectoryLastWriteTime);
                             newCurrent = null;
                         }
 
@@ -343,14 +357,14 @@ public static class FileSystemHelper
                             var originalPath = onlyChild.FullName;
                             var suggestedDestPath = parent.Combine(mergedNameWithoutExtension).GetComparablePath();
                             suggestedDestPath += ext is null ? null : "." + ext;
-                            if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName))
+                            if (onlyChild.MoveToDirectoryAndMerge(suggestedDestPath, useUniqueName, updateDirectoryLastWriteTime))
                             {
                                 Log($"合并重复文件夹：({originalPath}, {current.FullName}) -> {onlyChild.FullName}");
                                 // 若成功移动，则此时onlyChild已和current在同一目录下
                                 // 移出OnlyChild后，root变为空目录，删除它
                                 // 判断名称是否相等，以防删除onlyChild
                                 if (!onlyChild.Name.EqualsFileName(current.Name))
-                                    current.Delete();
+                                    DeleteDirectory(current.FullName, updateDirectoryLastWriteTime: updateDirectoryLastWriteTime);
                                 newCurrent = onlyChild;
                             }
                         }
@@ -386,8 +400,9 @@ public static class FileSystemHelper
         /// 删除<paramref name = "info"/>，如果不存在则不操作
         /// </summary>
         /// <returns>是否成功删除</returns>
-        public bool RemoveIfExists(bool moveToRecycleBin = false)
+        public bool RemoveIfExists(bool moveToRecycleBin = false, bool updateDirectoryLastWriteTime = false)
         {
+            using var dates = new DirectoryTimestampScope(updateDirectoryLastWriteTime, info.Parent?.FullName);
             try
             {
                 if (info.Exists)
@@ -417,8 +432,9 @@ public static class FileSystemHelper
         /// 删除<paramref name = "info"/>，如果不存在则不操作
         /// </summary>
         /// <returns>是否成功删除</returns>
-        public bool RemoveIfExists(bool recursive, bool moveToRecycleBin = false)
+        public bool RemoveIfExists(bool recursive, bool moveToRecycleBin = false, bool updateDirectoryLastWriteTime = false)
         {
+            using var dates = new DirectoryTimestampScope(updateDirectoryLastWriteTime, info.Parent?.FullName);
             try
             {
                 if (info.Exists)
@@ -452,12 +468,18 @@ public static class FileSystemHelper
         } ?? throw new InvalidOperationException("FileSystemInfo has no parent");
 
         /// <inheritdoc cref = "DirectoryInfo.MoveTo"/>
-        public void MoveTo(string destPath)
+        public void MoveTo(string destPath, bool updateDirectoryLastWriteTime = false)
         {
+            destPath = Path.GetFullPath(destPath);
+            if (destPath.EqualsFileName(info.FullName))
+                return;
+            using var dates = new DirectoryTimestampScope(updateDirectoryLastWriteTime, info.Parent?.FullName, Path.GetDirectoryName(destPath));
             switch (info)
             {
                 case DirectoryInfo dirInfo:
+                    var modified = Directory.GetLastWriteTimeUtc(dirInfo.FullName);
                     dirInfo.MoveTo(destPath);
+                    Directory.SetLastWriteTimeUtc(destPath, updateDirectoryLastWriteTime ? DateTime.UtcNow : modified);
                     break;
                 case FileInfo fileInfo:
                     fileInfo.MoveTo(destPath);
@@ -473,13 +495,13 @@ public static class FileSystemHelper
         /// 将移动<paramref name = "info"/>为<paramref name = "destPath"/>
         /// </summary>
         /// <param name = "destPath">目标位置</param>
-        public bool TryMoveTo(string destPath)
+        public bool TryMoveTo(string destPath, bool updateDirectoryLastWriteTime = false)
         {
             try
             {
                 if (Path.GetDirectoryName(destPath) is { } directory)
                     _ = Directory.CreateDirectory(directory);
-                info.MoveTo(destPath);
+                info.MoveTo(destPath, updateDirectoryLastWriteTime);
                 return true;
             }
             catch (Exception ex)
@@ -497,7 +519,7 @@ public static class FileSystemHelper
         /// </remarks>
         /// <param name = "suggestedDestPath">目标位置</param>
         /// <param name = "renameWhenDuplicated">当无法删除目标同名项目的时候，重命名<paramref name = "suggestedDestPath"/></param>
-        private bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated)
+        private bool MoveToDirectoryAndMerge(string suggestedDestPath, bool renameWhenDuplicated, bool updateDirectoryLastWriteTime)
         {
             // 异常目录
             if (info.Parent is not { Exists: true })
@@ -516,21 +538,21 @@ public static class FileSystemHelper
                     if (entries is [var onlyChild] && onlyChild.EqualsFileName(info.FullName))
                     {
                         // 移出子项，变成空目录
-                        info.MoveTo(GetUniquePath(suggestedDestPath));
-                        Directory.Delete(suggestedDestPath);
+                        info.MoveTo(GetUniquePath(suggestedDestPath, updateDirectoryLastWriteTime), updateDirectoryLastWriteTime);
+                        DeleteDirectory(suggestedDestPath, updateDirectoryLastWriteTime: updateDirectoryLastWriteTime);
                     }
                     else if (entries.Length is not 0)
                         throw new InvalidOperationException("目标位置已存在非空目录");
                 }
 
-                info.MoveTo(suggestedDestPath);
+                info.MoveTo(suggestedDestPath, updateDirectoryLastWriteTime);
                 return true;
             }
             catch (Exception e)
             {
                 if (renameWhenDuplicated)
                 {
-                    info.MoveTo(GetUniquePath(suggestedDestPath));
+                    info.MoveTo(GetUniquePath(suggestedDestPath, updateDirectoryLastWriteTime), updateDirectoryLastWriteTime);
                     return true;
                 }
 
@@ -539,13 +561,13 @@ public static class FileSystemHelper
             }
         }
 
-        public bool MoveRelativePathTo(string toPath, string fromPath = ExtractorBase.TempPath, bool moveToUniquePath = true)
+        public bool MoveRelativePathTo(string toPath, string fromPath = ExtractorBase.TempPath, bool moveToUniquePath = true, bool updateDirectoryLastWriteTime = false)
         {
             var relativePath = Path.GetRelativePath(fromPath, info.FullName);
             var dest = Path.Combine(toPath, relativePath);
             if (moveToUniquePath)
-                dest = GetUniquePath(dest);
-            return info.TryMoveTo(dest);
+                dest = GetUniquePath(dest, updateDirectoryLastWriteTime);
+            return info.TryMoveTo(dest, updateDirectoryLastWriteTime);
         }
     }
 

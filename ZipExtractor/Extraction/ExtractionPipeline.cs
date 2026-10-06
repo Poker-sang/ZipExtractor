@@ -8,7 +8,7 @@ using ZipExtractor.Logging;
 
 namespace ZipExtractor.Extraction;
 
-public sealed record PipelineOptions(string InputDirectory, string CompleteDirectory, bool KeepSources = false, int MaxDepth = 20);
+public sealed record PipelineOptions(string InputDirectory, string CompleteDirectory, bool KeepSources = false, int MaxDepth = 20, bool UpdateDirectoryLastWriteTime = false);
 /// <summary>Owns recursion and transactions; backends only extract one archive with one password.</summary>
 public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines, IArchiveProbe? probe = null)
 {
@@ -39,7 +39,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             try
             {
                 log.Archive(++index, sets.Count, set);
-                var result = ExtractTree(set, job, passwords, options.MaxDepth, progress, out var extracted, 0, cancellationToken);
+                var result = ExtractTree(set, job, passwords, options.MaxDepth, progress, out var extracted, 0, options.UpdateDirectoryLastWriteTime, cancellationToken);
                 if (!result.Succeeded)
                 {
                     failures++;
@@ -50,14 +50,14 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
                 }
 
                 var relative = Path.GetRelativePath(input, Path.GetDirectoryName(set.EntryPath)!);
-                var target = FileSystemHelper.GetUniquePath(Path.Combine(complete, relative, SafeName(set.DisplayName)));
+                var target = FileSystemHelper.GetUniquePath(Path.Combine(complete, relative, SafeName(set.DisplayName)), options.UpdateDirectoryLastWriteTime);
                 _ = Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                Directory.Move(extracted!, target);
+                new DirectoryInfo(extracted!).MoveTo(target, options.UpdateDirectoryLastWriteTime);
                 log.Success($"{set.DisplayName} · 全部校验通过");
                 log.Detail("保存", target);
                 if (!options.KeepSources)
                     foreach (var part in (result.VerifiedParts ?? [set.EntryPath]).Intersect(set.Parts, StringComparer.OrdinalIgnoreCase))
-                        _ = new FileInfo(part).RemoveIfExists(moveToRecycleBin: true);
+                        _ = new FileInfo(part).RemoveIfExists(moveToRecycleBin: true, updateDirectoryLastWriteTime: options.UpdateDirectoryLastWriteTime);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -66,7 +66,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             }
             finally
             {
-                DeleteWorkDirectory(job);
+                DeleteWorkDirectory(job, options.UpdateDirectoryLastWriteTime);
             }
         }
 
@@ -74,7 +74,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
         return failures;
     }
 
-    private ExtractionResult ExtractTree(ArchiveSet set, string work, IReadOnlyCollection<string?> passwords, int depth, IProgress<ExtractionProgress>? progress, out string? extracted, int level, CancellationToken token)
+    private ExtractionResult ExtractTree(ArchiveSet set, string work, IReadOnlyCollection<string?> passwords, int depth, IProgress<ExtractionProgress>? progress, out string? extracted, int level, bool updateDirectoryLastWriteTime, CancellationToken token)
     {
         extracted = null;
         if (depth <= 0)
@@ -106,7 +106,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
                     return lastResult;
                 }
 
-                DeleteWorkDirectory(attempt);
+                DeleteWorkDirectory(attempt, updateDirectoryLastWriteTime);
                 if (lastResult.Status == ExtractionStatus.PasswordOrCorruptData)
                     ambiguous = lastResult;
                 if (lastResult.Status is not (ExtractionStatus.WrongPassword or ExtractionStatus.PasswordOrCorruptData))
@@ -126,31 +126,31 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             var nestedWork = Path.Combine(work, "nested-" + Guid.NewGuid().ToString("N"));
             _ = Directory.CreateDirectory(nestedWork);
             ConsoleLog.Default.Info($"第 {level + 1} 层嵌套 · {Path.GetFileName(nested.EntryPath)}", level + 1);
-            var child = ExtractTree(nested, nestedWork, passwords, depth - 1, progress, out var childOutput, level + 1, token);
+            var child = ExtractTree(nested, nestedWork, passwords, depth - 1, progress, out var childOutput, level + 1, updateDirectoryLastWriteTime, token);
             if (!child.Succeeded)
                 return new(child.Status, $"嵌套压缩包 {Path.GetFileName(nested.EntryPath)}：{child.Message}");
-            var childTarget = FileSystemHelper.GetUniquePath(Path.Combine(Path.GetDirectoryName(nested.EntryPath)!, SafeName(nested.DisplayName)));
-            Directory.Move(childOutput!, childTarget);
+            var childTarget = FileSystemHelper.GetUniquePath(Path.Combine(Path.GetDirectoryName(nested.EntryPath)!, SafeName(nested.DisplayName)), updateDirectoryLastWriteTime);
+            new DirectoryInfo(childOutput!).MoveTo(childTarget, updateDirectoryLastWriteTime);
             foreach (var part in (child.VerifiedParts ?? [nested.EntryPath]).Intersect(nested.Parts, StringComparer.OrdinalIgnoreCase))
             {
                 File.SetAttributes(part, File.GetAttributes(part) & ~FileAttributes.ReadOnly);
-                File.Delete(part); // Only intermediates inside this transaction.
+                FileSystemHelper.DeleteFile(part, updateDirectoryLastWriteTime); // Only intermediates inside this transaction.
             }
 
-            DeleteWorkDirectory(nestedWork);
+            DeleteWorkDirectory(nestedWork, updateDirectoryLastWriteTime);
             ConsoleLog.Default.Success($"嵌套解压 · {nested.DisplayName}", level + 1);
         }
 
         return result;
     }
 
-    private static void DeleteWorkDirectory(string path)
+    private static void DeleteWorkDirectory(string path, bool updateDirectoryLastWriteTime)
     {
         if (!Directory.Exists(path))
             return;
         foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
             File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
-        Directory.Delete(path, true);
+        FileSystemHelper.DeleteDirectory(path, true, updateDirectoryLastWriteTime);
     }
 
     private static bool Contains(string parent, string child) => string.Equals(parent, child, StringComparison.OrdinalIgnoreCase) || child.StartsWith(parent.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
