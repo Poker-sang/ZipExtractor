@@ -15,16 +15,28 @@ public sealed partial class ArchiveDiscovery
 {
     private sealed record Item(string Path, ArchiveHeader Header, string? Key, int? Index, string Kind);
 
-    public static IReadOnlyList<ArchiveSet> Scan(string directory, bool recursive = true, bool skipGameFolders = false, IArchiveProbe? probe = null, CancellationToken token = default)
+    public static IReadOnlyList<ArchiveSet> Scan(string directory, bool recursive = true, bool skipGameFolders = false, IArchiveProbe? probe = null, Action<DiscoveryProgress>? progress = null, CancellationToken token = default)
     {
-        var files = EnumerateFiles(new(directory), recursive, skipGameFolders);
         var result = new List<ArchiveSet>();
-        foreach (var group in files.GroupBy(Path.GetDirectoryName, StringComparer.OrdinalIgnoreCase))
+        var filesScanned = 0;
+        void Report(string stage, string path) => progress?.Invoke(new(stage, path, filesScanned, result.Count));
+        foreach (var group in EnumerateDirectories(new(directory), recursive, skipGameFolders, Report, token))
         {
-            var items = group.Where(p => !p.EndsWith(".downloading", StringComparison.OrdinalIgnoreCase)).Select(p => ReadItem(p, probe, token)).ToArray();
+            var items = new List<Item>();
+            foreach (var file in group.OfType<FileInfo>())
+            {
+                token.ThrowIfCancellationRequested();
+                if (file.Name.EndsWith(".downloading", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                Report("读取文件头", file.FullName);
+                items.Add(ReadItem(file.FullName, probe, Report, token));
+                filesScanned++;
+            }
+            Report("关联分卷", Path.GetDirectoryName(group.FirstOrDefault()?.FullName) ?? directory);
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in items.OrderBy(i => i.Index ?? 0))
             {
+                token.ThrowIfCancellationRequested();
                 if (used.Contains(item.Path) || item.Header.Format == ArchiveFormat.Unknown)
                     continue;
                 var members = item.Key is null ? [item] : items.Where(i => string.Equals(i.Key, item.Key, StringComparison.OrdinalIgnoreCase)).OrderBy(i => i.Index).ToArray();
@@ -98,33 +110,52 @@ public sealed partial class ArchiveDiscovery
             }
         }
 
+        Report("扫描完成", directory);
         return result;
     }
 
-    private static IEnumerable<string> EnumerateFiles(DirectoryInfo directory, bool recursive, bool skipGameFolders)
+    private static IEnumerable<FileSystemInfo[]> EnumerateDirectories(DirectoryInfo directory, bool recursive, bool skipGameFolders, Action<string, string> report, CancellationToken token)
     {
-        var entries = directory.GetFileSystemInfos();
+        token.ThrowIfCancellationRequested();
+        report("枚举目录", directory.FullName);
+        var entries = new List<FileSystemInfo>();
+        foreach (var entry in directory.EnumerateFileSystemInfos())
+        {
+            token.ThrowIfCancellationRequested();
+            entries.Add(entry);
+        }
         if (skipGameFolders && FileSystemHelper.IsGameFolder(entries))
         {
             ConsoleLog.Default.GameSkipped(directory.FullName);
             yield break;
         }
 
-        foreach (var file in entries.OfType<FileInfo>())
-            yield return file.FullName;
+        yield return [.. entries];
         if (recursive)
             foreach (var child in entries.OfType<DirectoryInfo>())
-                foreach (var path in EnumerateFiles(child, true, skipGameFolders))
-                    yield return path;
+            {
+                token.ThrowIfCancellationRequested();
+                // Junctions can point back to an ancestor or outside the input tree.
+                if ((child.Attributes & FileAttributes.ReparsePoint) is not 0)
+                    continue;
+                foreach (var files in EnumerateDirectories(child, true, skipGameFolders, report, token))
+                    yield return files;
+            }
     }
 
-    private static Item ReadItem(string path, IArchiveProbe? probe, CancellationToken token)
+    private static Item ReadItem(string path, IArchiveProbe? probe, Action<string, string> report, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var header = ReadHeader(path);
-        return header.Format is ArchiveFormat.Unknown && probe?.Probe(path, token) is { } format && format is not ArchiveFormat.Unknown
-            ? new(path, new(format), null, null, "single")
-            : MakeItem(path, header);
+        if (header.Format is ArchiveFormat.Unknown && probe is not null)
+        {
+            report("深度探测（可能读取整个文件）", path);
+            token.ThrowIfCancellationRequested();
+            var format = probe.Probe(path, token);
+            if (format is not ArchiveFormat.Unknown)
+                return new(path, new(format), null, null, "single");
+        }
+        return MakeItem(path, header);
     }
 
     private static Item MakeItem(string path, ArchiveHeader header)

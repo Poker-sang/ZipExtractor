@@ -136,6 +136,8 @@ void Verify(ArchiveSet set, IArchiveExtractor engine, string? pass = null)
     Assert(File.ReadAllBytes(Path.Combine(output, "内容.bin")).SequenceEqual(payload), "Content mismatch");
 }
 
+Test("Discovery: progress, heartbeat and enumeration cancellation", () => DiscoveryChecks.Verify(Case("discovery-progress")));
+
 foreach (var format in new[]
 {
     "zip",

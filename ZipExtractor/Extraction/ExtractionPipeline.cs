@@ -25,9 +25,8 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
         _ = Directory.CreateDirectory(complete);
         var log = ConsoleLog.Default;
         var timer = Stopwatch.StartNew();
-        log.Info("扫描压缩包与分卷…");
         // Snapshot before extracting or moving anything. Never enumerate a changing directory tree.
-        var sets = ArchiveDiscovery.Scan(input, skipGameFolders: true, probe: _probe, token: cancellationToken);
+        var sets = log.ScanArchives(input, _probe, cancellationToken);
         var failures = 0;
         var index = 0;
         log.Info($"发现 {sets.Count} 个解压任务");
@@ -120,7 +119,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
         if (extracted is null)
             return result;
         // Mixed content is preserved, but game folders and their descendants are never expanded.
-        foreach (var nested in ArchiveDiscovery.Scan(extracted, skipGameFolders: true, probe: _probe, token: token))
+        foreach (var nested in ConsoleLog.Default.ScanArchives(extracted, _probe, token))
         {
             token.ThrowIfCancellationRequested();
             var nestedWork = Path.Combine(work, "nested-" + Guid.NewGuid().ToString("N"));
