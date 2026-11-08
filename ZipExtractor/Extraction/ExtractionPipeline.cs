@@ -35,16 +35,17 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             cancellationToken.ThrowIfCancellationRequested();
             var job = Path.Combine(complete, ".extract-" + Guid.NewGuid().ToString("N"));
             _ = Directory.CreateDirectory(job);
+            var preserveWork = false;
+            var completedAttempts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 log.Archive(++index, sets.Count, set);
-                var result = ExtractTree(set, job, passwords, options.MaxDepth, progress, out var extracted, 0, options.UpdateDirectoryLastWriteTime, cancellationToken);
+                var result = ExtractTree(set, job, passwords, options.MaxDepth, progress, out var extracted, 0, options.UpdateDirectoryLastWriteTime, completedAttempts, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!result.Succeeded)
                 {
                     failures++;
                     log.Error($"{ConsoleLog.StatusText(result.Status)}：{result.Message}；当前任务源文件已保留");
-                    if (result.Status == ExtractionStatus.Cancelled)
-                        cancellationToken.ThrowIfCancellationRequested();
                     continue;
                 }
 
@@ -58,6 +59,11 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
                     foreach (var part in (result.VerifiedParts ?? [set.EntryPath]).Intersect(set.Parts, StringComparer.OrdinalIgnoreCase))
                         _ = new FileInfo(part).RemoveIfExists(moveToRecycleBin: true, updateDirectoryLastWriteTime: options.UpdateDirectoryLastWriteTime);
             }
+            catch (OperationCanceledException)
+            {
+                preserveWork = true;
+                throw;
+            }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 failures++;
@@ -65,7 +71,10 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             }
             finally
             {
-                DeleteWorkDirectory(job, options.UpdateDirectoryLastWriteTime);
+                if ((preserveWork || cancellationToken.IsCancellationRequested) && completedAttempts.Any(Directory.Exists))
+                    log.Warning($"已保留完整解压并校验通过的内容（嵌套处理可能未完成，不自动续传）：{job}");
+                else
+                    DeleteWorkDirectory(job, options.UpdateDirectoryLastWriteTime);
             }
         }
 
@@ -73,7 +82,7 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
         return failures;
     }
 
-    private ExtractionResult ExtractTree(ArchiveSet set, string work, IReadOnlyCollection<string?> passwords, int depth, IProgress<ExtractionProgress>? progress, out string? extracted, int level, bool updateDirectoryLastWriteTime, CancellationToken token)
+    private ExtractionResult ExtractTree(ArchiveSet set, string work, IReadOnlyCollection<string?> passwords, int depth, IProgress<ExtractionProgress>? progress, out string? extracted, int level, bool updateDirectoryLastWriteTime, HashSet<string> completedAttempts, CancellationToken token)
     {
         extracted = null;
         if (depth <= 0)
@@ -98,14 +107,30 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
                 var attempt = Path.Combine(work, "attempt-" + Guid.NewGuid().ToString("N"));
                 _ = Directory.CreateDirectory(attempt);
                 session.Attempt(engine.Name, candidates[i], i + 1, candidates.Length, level);
-                lastResult = session.Extract(engine, new(set, attempt, candidates[i], progress, token));
+                var completed = false;
+                try
+                {
+                    lastResult = session.Extract(engine, new(set, attempt, candidates[i], progress, token));
+                    // Record successful validation before checking cancellation: the token may
+                    // have been cancelled just as the engine finished the entire archive.
+                    completed = lastResult.Succeeded;
+                    if (completed)
+                        _ = completedAttempts.Add(attempt);
+                }
+                finally
+                {
+                    if (!completed)
+                        DeleteWorkDirectory(attempt, updateDirectoryLastWriteTime);
+                }
+                token.ThrowIfCancellationRequested();
+                if (lastResult.Status is ExtractionStatus.Cancelled)
+                    throw new OperationCanceledException(lastResult.Message, token);
                 if (lastResult.Succeeded)
                 {
                     output = attempt;
                     return lastResult;
                 }
 
-                DeleteWorkDirectory(attempt, updateDirectoryLastWriteTime);
                 if (lastResult.Status == ExtractionStatus.PasswordOrCorruptData)
                     ambiguous = lastResult;
                 if (lastResult.Status is not (ExtractionStatus.WrongPassword or ExtractionStatus.PasswordOrCorruptData))
@@ -125,9 +150,10 @@ public sealed class ExtractionPipeline(IReadOnlyList<IArchiveExtractor> engines,
             var nestedWork = Path.Combine(work, "nested-" + Guid.NewGuid().ToString("N"));
             _ = Directory.CreateDirectory(nestedWork);
             ConsoleLog.Default.Info($"第 {level + 1} 层嵌套 · {Path.GetFileName(nested.EntryPath)}", level + 1);
-            var child = ExtractTree(nested, nestedWork, passwords, depth - 1, progress, out var childOutput, level + 1, updateDirectoryLastWriteTime, token);
+            var child = ExtractTree(nested, nestedWork, passwords, depth - 1, progress, out var childOutput, level + 1, updateDirectoryLastWriteTime, completedAttempts, token);
             if (!child.Succeeded)
                 return new(child.Status, $"嵌套压缩包 {Path.GetFileName(nested.EntryPath)}：{child.Message}");
+            token.ThrowIfCancellationRequested();
             var childTarget = FileSystemHelper.GetUniquePath(Path.Combine(Path.GetDirectoryName(nested.EntryPath)!, SafeName(nested.DisplayName)), updateDirectoryLastWriteTime);
             new DirectoryInfo(childOutput!).MoveTo(childTarget, updateDirectoryLastWriteTime);
             foreach (var part in (child.VerifiedParts ?? [nested.EntryPath]).Intersect(nested.Parts, StringComparer.OrdinalIgnoreCase))

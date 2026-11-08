@@ -30,14 +30,23 @@ internal static class DiscoveryChecks
         {
         }
 
+        VerifyOutput(directory, false);
+        VerifyOutput(directory, true);
+    }
+
+    private static void VerifyOutput(string directory, bool interactive)
+    {
         using var writer = new StringWriter();
-        var console = AnsiConsole.Create(new() { Out = new AnsiConsoleOutput(writer), Ansi = AnsiSupport.No, Interactive = InteractionSupport.No });
+        var console = AnsiConsole.Create(new() { Out = new AnsiConsoleOutput(writer), Ansi = interactive ? AnsiSupport.Yes : AnsiSupport.No, Interactive = interactive ? InteractionSupport.Yes : InteractionSupport.No });
         console.Profile.Width = 500;
         var log = new ConsoleLog(console);
         var probe = new WaitingProbe(() => writer.ToString());
         _ = log.ScanArchives(directory, probe);
-        if (!probe.SawHeartbeat || !writer.ToString().Contains("扫描完成", StringComparison.Ordinal) || writer.ToString().Contains('\u001b'))
+        var output = writer.ToString();
+        if (!probe.SawHeartbeat || (!interactive && !output.Contains("扫描完成", StringComparison.Ordinal)) || interactive != output.Contains('\u001b'))
             throw new InvalidOperationException("Scan heartbeat or plain output is missing.");
+        if (interactive && output.Contains("[信息] 深度探测", StringComparison.Ordinal))
+            throw new InvalidOperationException("Interactive discovery appended progress logs instead of refreshing.");
     }
 
     private sealed class WaitingProbe(Func<string> output) : IArchiveProbe

@@ -137,6 +137,8 @@ void Verify(ArchiveSet set, IArchiveExtractor engine, string? pass = null)
 }
 
 Test("Discovery: progress, heartbeat and enumeration cancellation", () => DiscoveryChecks.Verify(Case("discovery-progress")));
+for (var mode = 0; mode < 6; mode++)
+    Test($"Cancellation: preserve intermediates, mode={mode}", () => CancellationChecks.Verify(Case($"cancel-preserve-{mode}"), mode));
 
 foreach (var format in new[]
 {
